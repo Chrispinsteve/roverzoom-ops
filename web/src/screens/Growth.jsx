@@ -33,6 +33,36 @@ export function Growth() {
       <div style={{ padding: '0 24px 32px', display: 'flex', flexDirection: 'column', gap: 18 }}>
         {traffic.error && <ErrorNote error={traffic.error} onRetry={traffic.reload} />}
 
+        {t && t.installed && t.everReceived === false && (
+          <div className="sev-warn" style={{
+            display: 'flex', gap: 11, alignItems: 'flex-start',
+            padding: '12px 14px', borderRadius: 'var(--r-sm)',
+            background: 'var(--sev-wash)', border: '1px solid var(--sev-line)',
+          }}>
+            <span className="dot" style={{ marginTop: 6 }} />
+            <div style={{ fontSize: 13, lineHeight: 1.55 }}>
+              <strong style={{ color: 'var(--sev)' }}>Waiting for the first visitor.</strong>
+              <div className="muted" style={{ marginTop: 3 }}>
+                Everything below is live and will fill in as people arrive. If hours pass with real
+                traffic and this stays empty, check that the rider build has{' '}
+                <span className="mono">VITE_OPS_API_URL</span> set and that this API&rsquo;s{' '}
+                <span className="mono">CORS_ORIGINS</span> allows the rider domain.
+              </div>
+            </div>
+          </div>
+        )}
+
+        {t && t.installed && t.everReceived && t.totals.visits === 0 && (
+          <div className="row" style={{
+            gap: 8, padding: '10px 14px', borderRadius: 'var(--r-sm)',
+            background: 'var(--surface)', border: '1px solid var(--line)', fontSize: 12.5,
+          }}>
+            <span className="faint">
+              No visits in this window — tracking is live, it has just been quiet. Try a longer range.
+            </span>
+          </div>
+        )}
+
         {t && t.installed && t.attributionAvailable === false && (
           <div className="sev-warn" style={{
             display: 'flex', gap: 11, alignItems: 'flex-start',
@@ -55,17 +85,7 @@ export function Growth() {
           <Panel>
             <Empty
               title="Traffic tracking is not installed"
-              note="The site_events table does not exist yet. Run db/002_site_events.sql and db/003_site_events_attribution.sql against Supabase, then add the track() calls to the rider app — see integration/README.md."
-            />
-          </Panel>
-        ) : t && t.totals.visits === 0 ? (
-          // The table exists but nothing has ever been sent. Different problem,
-          // different fix — saying "0 visits" here would read as "nobody came",
-          // which is not what happened.
-          <Panel>
-            <Empty
-              title="Nothing has been received yet"
-              note="The table is installed and this screen is working — the rider site simply has not sent anything yet. Check that the rider app is deployed with integration/rider-app.patch applied, that VITE_OPS_API_URL points at this console, and that CORS_ORIGINS here includes the rider site's domain. Data starts from the moment it ships and cannot be backfilled."
+              note="The site_events table does not exist yet. Run db/002_site_events.sql and db/003_site_events_attribution.sql against Supabase, then deploy the rider app with integration/rider-app.patch applied."
             />
           </Panel>
         ) : traffic.loading && !t ? (
@@ -92,13 +112,19 @@ export function Growth() {
 
             {t.attributionAvailable !== false && (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 14 }}>
-                <BreakdownTable title="Where traffic comes from" rows={t.bySource} label="Source" useLabel />
-                <BreakdownTable title="Paid, social, search or direct" rows={t.byMedium} label="Type" useLabel />
+                <BreakdownTable title="Where traffic comes from" rows={t.bySource} label="Source" useLabel
+                  emptyNote="Google, Facebook, Instagram, Nextdoor, Yelp, TikTok, Bing, search and direct are all detected automatically. Each will appear here with its own conversion rate as visitors arrive." />
+                <BreakdownTable
+                  title="Paid, social, search or direct"
+                  rows={mergeVocabulary(t.vocabulary && t.vocabulary.mediums, t.byMedium)}
+                  label="Type" useLabel alwaysShow
+                />
               </div>
             )}
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 14 }}>
-              <BreakdownTable title="Where visitors are" rows={t.byCity} label="City" />
+              <BreakdownTable title="Where visitors are" rows={t.byCity} label="City"
+                emptyNote="Resolved at the edge from each visit, at city level." />
               {t.attributionAvailable !== false && t.byCampaign && t.byCampaign.length > 0
                 ? <BreakdownTable title="Campaigns" rows={t.byCampaign} label="Campaign" />
                 : t.attributionAvailable === false ? null : <Panel title="Campaigns">
@@ -246,9 +272,24 @@ function FunnelPanel({ funnel, loading, error, source, onSource, onRetry, source
   );
 }
 
-function BreakdownTable({ title, rows, label, useLabel }) {
-  if (!rows || !rows.length) {
-    return <Panel title={title}><Empty title="No data yet" /></Panel>;
+// Shows every category the console watches, with real counts merged in. At
+// zero this is the difference between "nothing is being measured" and "these
+// six things are being measured and none has happened yet".
+function mergeVocabulary(vocabulary, rows) {
+  if (!vocabulary || !vocabulary.length) return rows || [];
+  const byKey = new Map((rows || []).map((r) => [r.key, r]));
+  return vocabulary
+    .map((v) => byKey.get(v.key) || { key: v.key, label: v.label, visits: 0, booked: 0, conversionPct: 0 })
+    .sort((a, b) => b.visits - a.visits);
+}
+
+function BreakdownTable({ title, rows, label, useLabel, alwaysShow, emptyNote }) {
+  if ((!rows || !rows.length) && !alwaysShow) {
+    return (
+      <Panel title={title}>
+        <Empty title="Nothing recorded yet" note={emptyNote} />
+      </Panel>
+    );
   }
   return (
     <Panel title={title} pad={false}>

@@ -204,6 +204,18 @@ router.get('/analytics/traffic', requireAdmin, requirePermission('analytics.read
 
     const events = data || [];
 
+    // Has this table EVER received anything, ignoring the window? Zero visits
+    // in the last 30 days and never-installed tracking look the same in the
+    // query above, but one is a quiet week and the other is a broken pipeline.
+    let everReceived = events.length > 0;
+    let firstEventAt = null;
+    if (!everReceived) {
+      const { data: first } = await supabase
+        .from('site_events').select('created_at').order('created_at', { ascending: true }).limit(1);
+      everReceived = Boolean(first && first.length);
+      firstEventAt = first && first.length ? first[0].created_at : null;
+    }
+
     // One row per SESSION, using its earliest event for attribution.
     const sessions = new Map();
     for (const e of events) {
@@ -243,6 +255,14 @@ router.get('/analytics/traffic', requireAdmin, requirePermission('analytics.read
 
     res.json({
       installed: true,
+      everReceived,
+      firstEventAt,
+      // The fixed vocabulary, so the console can show every category it
+      // watches — at zero — instead of an empty panel that says nothing about
+      // what is being measured.
+      vocabulary: {
+        mediums: attribution.MEDIUMS.map((m) => ({ key: m, label: attribution.labelForMedium(m) })),
+      },
       // False when db/003 has not been applied: the console then explains that
       // sources beyond Google cannot be broken out yet, instead of showing an
       // "Unknown" bar and letting someone conclude the traffic is untraceable.
