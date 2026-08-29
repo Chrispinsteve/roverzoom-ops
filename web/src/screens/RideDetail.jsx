@@ -138,6 +138,36 @@ export function RideDetail({ rideId, onClose, onChanged }) {
               )}
             </Section>
 
+            <Section title="Rider confirmation">
+              {ride.terms_accepted_at ? (
+                <>
+                  <Detail label="Age confirmed">
+                    <span style={{ color: 'var(--state-active)' }}>
+                      Confirmed 18+ or parent/guardian
+                    </span>
+                  </Detail>
+                  <Detail label="When">{dayAndClock(ride.terms_accepted_at)}</Detail>
+                  <Detail label="Wording" mono>{ride.terms_version}</Detail>
+                  {String(ride.terms_version || '').endsWith('-voice') && (
+                    <div className="faint" style={{ fontSize: 12, paddingTop: 4 }}>
+                      Given verbally to the AI assistant rather than read on screen.
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="sev-warn" style={{
+                  padding: '9px 12px', borderRadius: 'var(--r-xs)',
+                  background: 'var(--sev-wash)', border: '1px solid var(--sev-line)',
+                  fontSize: 12.5, lineHeight: 1.5,
+                }}>
+                  <strong style={{ color: 'var(--sev)' }}>No age confirmation on record.</strong>
+                  <div className="muted" style={{ marginTop: 2 }}>
+                    Booked before the attestation existed, or while the migration had not been applied.
+                  </div>
+                </div>
+              )}
+            </Section>
+
             {ride.canceled_by && (
               <Section title="Cancellation">
                 <Detail label="By">{ride.canceled_by}</Detail>

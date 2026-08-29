@@ -162,6 +162,12 @@ router.get('/rides/:id', requireAdmin, requirePermission('rides.read'), async (r
         canceled_by: booking.canceled_by,
         cancel_reason: booking.cancel_reason,
         driver_rating_of_rider: booking.driver_rating_of_rider,
+        // Age attestation captured at booking. NULL on anything booked before
+        // it existed, and on any booking taken while the migration was not yet
+        // applied — the console must show "not recorded" rather than implying
+        // the rider declined.
+        terms_accepted_at: booking.terms_accepted_at || null,
+        terms_version: booking.terms_version || null,
       },
       timeline: buildTimeline(booking),
       economics: can(req.admin.role, 'finance.read') ? rideEconomics(booking) : null,
