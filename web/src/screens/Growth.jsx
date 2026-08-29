@@ -33,11 +33,39 @@ export function Growth() {
       <div style={{ padding: '0 24px 32px', display: 'flex', flexDirection: 'column', gap: 18 }}>
         {traffic.error && <ErrorNote error={traffic.error} onRetry={traffic.reload} />}
 
+        {t && t.installed && t.attributionAvailable === false && (
+          <div className="sev-warn" style={{
+            display: 'flex', gap: 11, alignItems: 'flex-start',
+            padding: '12px 14px', borderRadius: 'var(--r-sm)',
+            background: 'var(--sev-wash)', border: '1px solid var(--sev-line)',
+          }}>
+            <span className="dot" style={{ marginTop: 6 }} />
+            <div style={{ fontSize: 13, lineHeight: 1.55 }}>
+              <strong style={{ color: 'var(--sev)' }}>Only Google traffic can be identified.</strong>
+              <div className="muted" style={{ marginTop: 3 }}>
+                Visits are being counted, but the source columns are missing so Facebook, Instagram,
+                Nextdoor, campaigns and QR codes all fall together. Run{' '}
+                <span className="mono">db/003_site_events_attribution.sql</span> to break them out.
+              </div>
+            </div>
+          </div>
+        )}
+
         {notInstalled ? (
           <Panel>
             <Empty
-              title="Traffic tracking is not installed yet"
-              note="Nothing is being recorded, so there is nothing to show. Run db/002_site_events.sql against Supabase, then add the seven track() calls to the rider app — see integration/README.md. Data starts from the moment it ships; it cannot be backfilled."
+              title="Traffic tracking is not installed"
+              note="The site_events table does not exist yet. Run db/002_site_events.sql and db/003_site_events_attribution.sql against Supabase, then add the track() calls to the rider app — see integration/README.md."
+            />
+          </Panel>
+        ) : t && t.totals.visits === 0 ? (
+          // The table exists but nothing has ever been sent. Different problem,
+          // different fix — saying "0 visits" here would read as "nobody came",
+          // which is not what happened.
+          <Panel>
+            <Empty
+              title="Nothing has been received yet"
+              note="The table is installed and this screen is working — but the rider site has not sent a single event, so there is nothing to count. Add the seven track() calls to the rider app and deploy it (integration/README.md). Data starts from the moment it ships and cannot be backfilled."
             />
           </Panel>
         ) : traffic.loading && !t ? (
@@ -49,21 +77,34 @@ export function Growth() {
               <Metric label="Booked" value={count(t.totals.booked)}
                 sub={`${t.totals.conversionPct}% of visits`}
                 level={t.totals.booked > 0 ? 'active' : 'neutral'} />
-              <Metric label="From ads" value={count(t.ads.visits)}
-                sub={`${t.ads.shareOfTraffic}% of all traffic`} />
-              <Metric label="Ad bookings" value={count(t.ads.booked)}
-                sub={`${t.ads.conversionPct}% of ad visits`}
+              <Metric label="Paid visits" value={count(t.ads.visits)}
+                sub={`${t.ads.shareOfTraffic}% of all traffic, every platform`} />
+              <Metric label="Paid bookings" value={count(t.ads.booked)}
+                sub={`${t.ads.conversionPct}% of paid visits`}
                 level={t.ads.visits > 0 && t.ads.booked === 0 ? 'warn' : 'neutral'} />
             </div>
 
             {t.daily.length > 0 && <DailyChart daily={t.daily} />}
 
             <FunnelPanel funnel={f} loading={funnel.loading} error={funnel.error}
-              source={source} onSource={setSource} onRetry={funnel.reload} />
+              source={source} onSource={setSource} onRetry={funnel.reload}
+              sources={t.bySource || []} />
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 14 }}>
+            {t.attributionAvailable !== false && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 14 }}>
+                <BreakdownTable title="Where traffic comes from" rows={t.bySource} label="Source" useLabel />
+                <BreakdownTable title="Paid, social, search or direct" rows={t.byMedium} label="Type" useLabel />
+              </div>
+            )}
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 14 }}>
               <BreakdownTable title="Where visitors are" rows={t.byCity} label="City" />
-              <BreakdownTable title="How they arrived" rows={t.byChannel} label="Channel" />
+              {t.attributionAvailable !== false && t.byCampaign && t.byCampaign.length > 0
+                ? <BreakdownTable title="Campaigns" rows={t.byCampaign} label="Campaign" />
+                : t.attributionAvailable === false ? null : <Panel title="Campaigns">
+                    <Empty title="No tagged campaigns yet"
+                      note="Add utm_campaign to the links you post on Facebook, Nextdoor and your printed flyers, and each one will be listed here with its own conversion rate. See integration/README.md." />
+                  </Panel>}
             </div>
           </>
         ) : null}
@@ -106,7 +147,7 @@ function DailyChart({ daily }) {
 }
 
 // The answer to "why do people visit and not book?".
-function FunnelPanel({ funnel, loading, error, source, onSource, onRetry }) {
+function FunnelPanel({ funnel, loading, error, source, onSource, onRetry, sources = [] }) {
   if (loading && !funnel) return <Loading rows={4} />;
   if (error) return <ErrorNote error={error} onRetry={onRetry} />;
   if (!funnel || funnel.installed === false) return null;
@@ -122,8 +163,15 @@ function FunnelPanel({ funnel, loading, error, source, onSource, onRetry }) {
         </div>
       }
       action={
+        // Only offer sources that actually have traffic — a filter that always
+        // returns nothing teaches an operator to distrust the screen.
         <Chips
-          options={[{ value: 'all', label: 'All traffic' }, { value: 'ad', label: 'From ads' }]}
+          options={[
+            { value: 'all', label: 'All traffic' },
+            { value: 'paid', label: 'Paid only' },
+            ...sources.filter((s) => s.visits > 0 && s.key !== 'Unknown').slice(0, 4)
+              .map((s) => ({ value: s.key, label: s.label || s.key })),
+          ]}
           value={source} onChange={onSource}
         />
       }
@@ -198,7 +246,7 @@ function FunnelPanel({ funnel, loading, error, source, onSource, onRetry }) {
   );
 }
 
-function BreakdownTable({ title, rows, label }) {
+function BreakdownTable({ title, rows, label, useLabel }) {
   if (!rows || !rows.length) {
     return <Panel title={title}><Empty title="No data yet" /></Panel>;
   }
@@ -212,7 +260,7 @@ function BreakdownTable({ title, rows, label }) {
           <tbody>
             {rows.slice(0, 12).map((r) => (
               <tr key={r.key}>
-                <td style={{ fontSize: 13 }}>{r.key}</td>
+                <td style={{ fontSize: 13 }}>{useLabel ? (r.label || r.key) : r.key}</td>
                 <td className="r num" style={{ fontSize: 13 }}>{count(r.visits)}</td>
                 <td className="r num" style={{ fontSize: 13 }}>{count(r.booked)}</td>
                 <td className="r num" style={{ fontSize: 12.5, color: r.booked > 0 ? 'var(--state-active)' : 'var(--ink-4)' }}>

@@ -123,6 +123,7 @@ Then the two migrations, against the same Supabase project:
 ```bash
 psql "$DATABASE_URL" -f db/001_admin_audit_log.sql   # durable audit trail
 psql "$DATABASE_URL" -f db/002_site_events.sql       # traffic + funnel
+psql "$DATABASE_URL" -f db/003_site_events_attribution.sql  # multi-source attribution
 ```
 
 Both are additive and safe on a live database. Without the first, actions are
@@ -251,10 +252,16 @@ conversion pixel — not analytics. There is no GA4 property, so no pageview,
 session or region data exists anywhere. `db/002_site_events.sql` plus the
 snippet in `integration/` creates it, first-party.
 
-It also answers "are the ads working?" **without** depending on Google: the
-rider app already stores an ad click (`gclid`) in `localStorage`, so each event
-records whether the visit came from an ad. Ad-driven visits and the bookings
-that follow are countable here directly.
+Traffic is attributed across **every** channel, not just Google: platform click
+ids (`gclid`, `fbclid`, `ttclid`, `msclkid`, and the rest), UTM tags, and the
+referring site are normalized server-side into a fixed `source` / `medium`
+vocabulary. That separates a paid Facebook click from an organic Facebook post,
+Instagram from Facebook, and names local-discovery sites like Nextdoor and Yelp
+rather than lumping them into "referral". Printed flyers are attributable with
+`utm_medium=qr`.
+
+Because attribution is first-party, "are the ads working?" is answerable per
+channel even though Google's own conversion tag currently reports nothing.
 
 `POST /api/track` is the only unauthenticated write surface in the system, and
 is built accordingly: it accepts a fixed vocabulary only (a known step, channel,
@@ -280,7 +287,7 @@ server/                Express API — the ONLY holder of the service-role key
 web/                   React + Vite console
   src/design/          tokens.css · base.css  ← the whole design system
   src/screens/         one file per surface
-db/                    001_admin_audit_log.sql · 002_site_events.sql
+db/                    001_admin_audit_log.sql · 002_site_events.sql · 003_site_events_attribution.sql
 integration/           the rider-app tracking snippet + how to wire it
 archive/               the original static prototype, kept for reference
 ```

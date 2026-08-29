@@ -63,24 +63,59 @@ see higher fares, the problem is pricing, not the flow.
 
 ---
 
-## 3. Install the table
+## 3. Tag your non-Google links
+
+Google and Meta add their own click ids (`gclid`, `fbclid`) automatically, so
+paid traffic from those is detected with no work. **Everything else needs a
+tagged link**, or it lands in the report as plain "referral" or "direct" and
+you cannot tell which post or flyer produced it.
+
+Add UTM parameters to any link you control:
+
+```
+https://www.roverzoom.com/?utm_source=facebook&utm_medium=social&utm_campaign=medical_aug
+https://www.roverzoom.com/?utm_source=nextdoor&utm_medium=social&utm_campaign=neighbours
+https://www.roverzoom.com/?utm_source=flyer&utm_medium=qr&utm_campaign=medical_offices
+https://www.roverzoom.com/?utm_source=yelp&utm_medium=referral
+```
+
+Rules of thumb:
+
+- `utm_medium=cpc` **only** when you paid for the click. That is what the
+  console counts as ad spend traffic.
+- Use `qr` for printed material — your flyers and business cards should each
+  carry a distinct `utm_campaign` so you can tell which print run works.
+- Keep names lowercase and consistent (`facebook`, never `Facebook` or `FB`).
+  The API normalizes case, but consistent naming keeps campaigns from
+  fragmenting.
+
+Detected automatically, with no tagging needed: Google Ads, Meta ads, TikTok,
+Bing, X, LinkedIn, Pinterest, Snapchat, and organic referrals from Facebook,
+Instagram, Nextdoor, Yelp, Tripadvisor, Reddit and the major search engines.
+
+---
+
+## 4. Install the table
 
 In the ops repo, against the same Supabase project:
 
 ```bash
-psql "$DATABASE_URL" -f db/002_site_events.sql
+psql "$DATABASE_URL" -f db/002_site_events.sql              # if not already run
+psql "$DATABASE_URL" -f db/003_site_events_attribution.sql  # multi-source columns
 ```
 
-Until this runs, the Growth screen says so plainly rather than showing zeros.
+Both are additive and idempotent. Until they run, the Growth screen says so
+plainly rather than showing zeros.
 
 ---
 
 ## What is and is not collected
 
 **Collected:** a random per-visit id (sessionStorage, dies with the tab), which
-step was reached, whether the visit came from an ad, coarse device class, the
-fare shown at the price step, and city/region resolved at the edge by the ops
-API from its own request headers.
+step was reached, the traffic source (UTM tags, platform click ids, and the
+referring site's *origin* only), coarse device class, the fare shown at the
+price step, and city/region resolved at the edge by the ops API from its own
+request headers.
 
 **Not collected:** no name, phone, email, pickup or dropoff address, no IP
 address stored, no user agent string, and no identifier that persists across

@@ -14,6 +14,7 @@ const roles = require('../lib/roles');
 const { riderContact, maskPhone } = require('../lib/redact');
 const docs = require('../lib/documents');
 const funnel = require('../domain/funnel');
+const attribution = require('../domain/attribution');
 
 // --- money -----------------------------------------------------------------
 
@@ -409,4 +410,104 @@ test('conversion is computed from the final step', () => {
   ]);
   assert.equal(r.booked, 1);
   assert.equal(r.conversionPct, 25);
+});
+
+
+// --- traffic attribution ---------------------------------------------------
+
+test('a platform click id marks the visit as paid', () => {
+  for (const [id, expected] of [['gclid', 'google'], ['ttclid', 'tiktok'], ['msclkid', 'bing']]) {
+    const r = attribution.resolve({ clickIds: { [id]: 'abc' } });
+    assert.equal(r.source, expected);
+    assert.equal(r.medium, 'cpc');
+    assert.equal(r.paid, true);
+  }
+});
+
+test('a paid Facebook click is told apart from an organic Facebook post', () => {
+  // Both arrive with a facebook.com referrer. Only one was bought, and
+  // reporting them together would make ad spend look effective for free.
+  const paid = attribution.resolve({ clickIds: { fbclid: 'x' }, referrer: 'https://l.facebook.com/' });
+  const organic = attribution.resolve({ referrer: 'https://m.facebook.com/' });
+
+  assert.equal(paid.source, 'facebook');
+  assert.equal(paid.paid, true);
+  assert.equal(paid.medium, 'cpc');
+
+  assert.equal(organic.source, 'facebook');
+  assert.equal(organic.paid, false);
+  assert.equal(organic.medium, 'social');
+});
+
+test('Instagram is separated from Facebook despite sharing fbclid', () => {
+  const r = attribution.resolve({ clickIds: { fbclid: 'x' }, referrer: 'https://l.instagram.com/' });
+  assert.equal(r.source, 'instagram');
+  assert.equal(r.paid, true);
+});
+
+test('an explicit utm_source outranks the referrer', () => {
+  // A newsletter linking through Facebook is email traffic, not social.
+  const r = attribution.resolve({
+    utm: { source: 'mailchimp', medium: 'email', campaign: 'August Update' },
+    referrer: 'https://m.facebook.com/',
+  });
+  assert.equal(r.source, 'mailchimp');
+  assert.equal(r.medium, 'email');
+  assert.equal(r.campaign, 'august_update', 'campaign names are normalized');
+  assert.equal(r.paid, false);
+});
+
+test('local discovery sites are named, not lumped into referral', () => {
+  assert.equal(attribution.resolve({ referrer: 'https://nextdoor.com/feed' }).source, 'nextdoor');
+  assert.equal(attribution.resolve({ referrer: 'https://www.yelp.com/biz/x' }).source, 'yelp');
+});
+
+test('search engines read as organic, not referral', () => {
+  for (const ref of ['https://www.google.com/', 'https://duckduckgo.com/', 'https://www.bing.com/']) {
+    const r = attribution.resolve({ referrer: ref });
+    assert.equal(r.medium, 'organic', `${ref} should be organic`);
+    assert.equal(r.paid, false);
+  }
+});
+
+test('printed material is attributable via utm', () => {
+  const r = attribution.resolve({ utm: { source: 'flyer', medium: 'qr', campaign: 'medical_offices' } });
+  assert.equal(r.source, 'flyer');
+  assert.equal(r.medium, 'qr');
+  assert.equal(r.paid, false);
+});
+
+test('no signals at all is direct, never a guess', () => {
+  const r = attribution.resolve({});
+  assert.equal(r.source, 'direct');
+  assert.equal(r.medium, 'none');
+  assert.equal(r.paid, false);
+});
+
+test('an unrecognized referrer keeps its host rather than being discarded', () => {
+  const r = attribution.resolve({ referrer: 'https://palmbeachblog.com/posts/1' });
+  assert.equal(r.source, 'palmbeachblog.com');
+  assert.equal(r.medium, 'referral');
+});
+
+test('source values are normalized so reports cannot fragment', () => {
+  const a = attribution.resolve({ utm: { source: 'Facebook' } });
+  const b = attribution.resolve({ utm: { source: 'FACEBOOK  ' } });
+  const c = attribution.resolve({ utm: { source: 'face book' } });
+  assert.equal(a.source, 'facebook');
+  assert.equal(b.source, 'facebook');
+  assert.equal(c.source, 'face_book');
+});
+
+test('a hostile utm_source cannot inject arbitrary text', () => {
+  const r = attribution.resolve({ utm: { source: "<script>alert(1)</script>", campaign: 'a'.repeat(500) } });
+  assert.ok(!/[<>]/.test(r.source), 'markup must not survive normalization');
+  assert.ok(r.campaign.length <= 60, 'campaign length is capped');
+});
+
+test('only the referrer HOST is kept, never the full URL', () => {
+  // A referring URL can carry the visitor's search terms in its path.
+  const r = attribution.resolve({ referrer: 'https://www.google.com/search?q=private+medical+question' });
+  assert.equal(r.referrerHost, 'google.com');
+  assert.ok(!JSON.stringify(r).includes('private'), 'referrer path must not be retained');
 });
