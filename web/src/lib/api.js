@@ -66,6 +66,7 @@ export const api = {
 
   drivers: (params = {}) => request(`/drivers?${new URLSearchParams(clean(params))}`),
   driver: (id) => request(`/drivers/${id}`),
+  driverDocuments: (id) => request(`/drivers/${id}/documents`),
   reviewDriver: (id, body) => request(`/drivers/${id}/review`, { method: 'POST', body }),
   setDriverStatus: (id, body) => request(`/drivers/${id}/status`, { method: 'POST', body }),
   liveMap: () => request('/drivers-map/live'),

@@ -7,6 +7,7 @@ const { auditor } = require('../lib/audit');
 const { withTrust, sortByUrgency, getDriverWithTrust, locationFreshness, invalidate } = require('../lib/directory');
 const { REVIEW_META_KEY, STANDING_PRIORITY } = require('../domain/trust');
 const { summarizeEarnings } = require('../domain/money');
+const { resolveForDriver, presenceForDriver } = require('../lib/documents');
 const { ACTIVE_STATUSES, STATUS_LABEL } = require('../domain/lifecycle');
 
 const router = express.Router();
@@ -81,13 +82,15 @@ router.get('/drivers/:id', requireAdmin, requirePermission('drivers.read'), asyn
 
     res.json({
       driver: publicDriver(driver),
-      // The three self-uploaded documents that are currently the ONLY real
-      // gate on taking rides. Surfaced so a reviewer can actually look at them.
+      // Presence only. The licence and insurance columns hold RAW STORAGE
+      // PATHS into a private bucket, which are useless to a browser and must
+      // not be handed out regardless — the viewable, signed URLs come from
+      // GET /drivers/:id/documents, which is separately permissioned and
+      // audited.
       documents: {
-        photo_url: driver.photo_url || null,
-        license_photo_url: driver.license_photo_url || null,
-        insurance_photo_url: driver.insurance_photo_url || null,
+        items: presenceForDriver(driver),
         completedAt: driver.profile_completed_at,
+        viewable: can(req.admin.role, 'drivers.documents'),
       },
       activity: {
         rides,
@@ -98,11 +101,46 @@ router.get('/drivers/:id', requireAdmin, requirePermission('drivers.read'), asyn
       actions: {
         canReview: can(req.admin.role, 'drivers.review'),
         canSuspend: can(req.admin.role, 'drivers.suspend'),
+        canViewDocuments: can(req.admin.role, 'drivers.documents'),
       },
     });
   } catch (err) {
     console.error('[drivers:get]', err.message);
     res.status(500).json({ error: 'Could not load the driver.' });
+  }
+});
+
+// GET /api/admin/drivers/:id/documents
+//
+// Mints short-lived signed URLs for a driver's identity documents so a
+// reviewer can actually look at them. Separately permissioned from
+// drivers.read, and every call is audited: "who looked at this person's
+// licence, and when" is a question worth being able to answer.
+router.get('/drivers/:id/documents', requireAdmin, requirePermission('drivers.documents'), async (req, res) => {
+  const audit = auditor(req);
+  try {
+    const driver = await getDriverWithTrust(req.params.id);
+    if (!driver) return res.status(404).json({ error: 'Driver not found.' });
+
+    const resolved = await resolveForDriver(driver);
+
+    // Audited BEFORE the URLs are returned, so a crash between the two can
+    // never produce an unrecorded disclosure.
+    await audit({
+      action: 'driver.documents_viewed',
+      subjectType: 'driver',
+      subjectId: driver.id,
+      summary: `Viewed identity documents for ${driver.name}`,
+      detail: {
+        types: resolved.documents.filter((d) => d.present).map((d) => d.type),
+        unreachable: resolved.documents.filter((d) => d.kind === 'unreachable').map((d) => d.type),
+      },
+    });
+
+    res.json(resolved);
+  } catch (err) {
+    console.error('[drivers:documents]', err.message);
+    res.status(500).json({ error: 'Could not load the driver documents.' });
   }
 });
 

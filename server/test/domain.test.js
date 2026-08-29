@@ -12,6 +12,7 @@ const lifecycle = require('../domain/lifecycle');
 const attention = require('../domain/attention');
 const roles = require('../lib/roles');
 const { riderContact, maskPhone } = require('../lib/redact');
+const docs = require('../lib/documents');
 
 // --- money -----------------------------------------------------------------
 
@@ -220,4 +221,66 @@ test('a quiet board produces an empty feed', () => {
     drivers: [{ standing: { key: 'cleared' } }],
   });
   assert.equal(feed.counts.total, 0);
+});
+
+
+// --- identity documents ----------------------------------------------------
+
+test('a public photo URL is passed through, never re-signed', async () => {
+  const url = 'https://x.supabase.co/storage/v1/object/public/driver-photos/a/photo.jpg';
+  const resolved = await docs.resolveOne('photo', url);
+  assert.equal(resolved.kind, 'public');
+  assert.equal(resolved.url, url);
+  assert.equal(resolved.present, true);
+});
+
+test('a missing document is reported as missing, not as an error', async () => {
+  const resolved = await docs.resolveOne('license', null);
+  assert.equal(resolved.present, false);
+  assert.equal(resolved.kind, 'missing');
+  assert.equal(resolved.url, null);
+});
+
+test('storage paths normalize regardless of how they were written', () => {
+  const bucket = 'driver-documents';
+  // The upstream app writes `${driverId}/${type}-${Date.now()}.jpg`.
+  assert.equal(docs.normalizePath('abc/license-1.jpg', bucket), 'abc/license-1.jpg');
+  // Defensive: a value that already carries the bucket prefix must not become
+  // driver-documents/driver-documents/... and 404 on signing.
+  assert.equal(docs.normalizePath('driver-documents/abc/license-1.jpg', bucket), 'abc/license-1.jpg');
+  assert.equal(docs.normalizePath('/abc/license-1.jpg', bucket), 'abc/license-1.jpg');
+});
+
+test('a raw storage path is never mistaken for a usable URL', () => {
+  assert.equal(docs.isAbsoluteUrl('abc/license-1738.jpg'), false);
+  assert.equal(docs.isAbsoluteUrl('https://x.supabase.co/a.jpg'), true);
+});
+
+test('licence and insurance resolve against the private bucket', () => {
+  // The whole reason signing is needed: these two are NOT in the public bucket.
+  assert.equal(docs.BUCKETS.license, 'driver-documents');
+  assert.equal(docs.BUCKETS.insurance, 'driver-documents');
+  assert.notEqual(docs.BUCKETS.photo, docs.BUCKETS.license);
+});
+
+test('presence view leaks no path and no URL', () => {
+  const items = docs.presenceForDriver({
+    photo_url: 'https://x/y.jpg',
+    license_photo_url: 'abc/license-1.jpg',
+    insurance_photo_url: null,
+  });
+  const serialized = JSON.stringify(items);
+  assert.ok(!serialized.includes('abc/license-1.jpg'), 'storage path must not appear');
+  assert.ok(!serialized.includes('https://x/y.jpg'), 'URL must not appear');
+  assert.deepEqual(items.map((i) => i.present), [true, true, false]);
+});
+
+test('only vetting roles may view identity documents', () => {
+  for (const role of roles.ROLE_KEYS) {
+    const expected = role === 'owner' || role === 'trust';
+    assert.equal(roles.can(role, 'drivers.documents'), expected, `${role} drivers.documents`);
+  }
+  // Being able to browse drivers must NOT imply seeing their licence.
+  assert.equal(roles.can('dispatcher', 'drivers.read'), true);
+  assert.equal(roles.can('dispatcher', 'drivers.documents'), false);
 });

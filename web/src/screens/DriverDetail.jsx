@@ -76,18 +76,8 @@ export function DriverDetail({ driverId, onClose, onChanged }) {
               )}
             </Section>
 
-            <Section title="Documents">
-              {data.documents.completedAt ? (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 9 }}>
-                  <Document label="Photo" url={data.documents.photo_url} />
-                  <Document label="Licence" url={data.documents.license_photo_url} />
-                  <Document label="Insurance" url={data.documents.insurance_photo_url} />
-                </div>
-              ) : (
-                <div className="faint" style={{ fontSize: 13 }}>
-                  This driver has not finished uploading their documents, so they cannot see ride requests.
-                </div>
-              )}
+            <Section title="Identity documents">
+              <Documents driverId={d.id} summary={data.documents} />
             </Section>
 
             <Section title="Details">
@@ -186,26 +176,128 @@ function Gate({ on, label, detail }) {
   );
 }
 
-function Document({ label, url }) {
-  if (!url) {
+// Identity documents.
+//
+// The licence and insurance columns hold raw paths into a PRIVATE storage
+// bucket, so they cannot be rendered directly — the API mints short-lived
+// signed URLs, and only for roles that may see them. Fetched on demand rather
+// than with the dossier, because every fetch is recorded in the audit trail as
+// a disclosure.
+function Documents({ driverId, summary }) {
+  // Auto-loads for reviewers: looking at these IS the job, and one audit entry
+  // per dossier opened is exactly the record worth keeping. `enabled` keeps a
+  // role without the permission from even attempting the call.
+  const { data: links, loading, error, reload, updatedAt: loadedAt } = useApi(
+    () => api.driverDocuments(driverId),
+    { deps: [driverId], enabled: summary.viewable }
+  );
+  const load = reload;
+
+  const items = links?.documents || summary.items || [];
+
+  return (
+    <>
+      {!summary.completedAt && (
+        <div className="sev-warn" style={{
+          padding: '9px 12px', marginBottom: 12, borderRadius: 'var(--r-xs)',
+          background: 'var(--sev-wash)', border: '1px solid var(--sev-line)', fontSize: 12.5,
+        }}>
+          Upload is incomplete, so this driver cannot see ride requests yet.
+        </div>
+      )}
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 9 }}>
+        {items.map((doc) => (
+          <DocumentTile key={doc.type} doc={doc} viewable={summary.viewable} loading={loading} />
+        ))}
+      </div>
+
+      {error && <div style={{ marginTop: 10 }}><ErrorNote error={error} onRetry={load} /></div>}
+
+      {links?.anyUnreachable && (
+        <div className="sev-warn" style={{
+          padding: '9px 12px', marginTop: 10, borderRadius: 'var(--r-xs)',
+          background: 'var(--sev-wash)', border: '1px solid var(--sev-line)',
+          fontSize: 12.5, lineHeight: 1.5,
+        }}>
+          A document is recorded against this driver but could not be retrieved from storage.
+          The upload may have failed part-way. Ask them to re-upload before approving.
+        </div>
+      )}
+
+      {summary.viewable ? (
+        <div className="row-between" style={{ marginTop: 10 }}>
+          <span className="faint" style={{ fontSize: 11.5 }}>
+            {loadedAt
+              ? `Links expire ${Math.round((links?.ttlSeconds ?? 300) / 60)} min after loading. Opening a document is recorded.`
+              : 'Loading secure links…'}
+          </span>
+          <button className="btn btn-sm btn-ghost" onClick={load} disabled={loading}>
+            {loading ? 'Loading…' : 'Refresh links'}
+          </button>
+        </div>
+      ) : (
+        <div style={{ marginTop: 10 }}>
+          <Restricted what="identity documents" />
+        </div>
+      )}
+    </>
+  );
+}
+
+function DocumentTile({ doc, viewable, loading }) {
+  const frame = {
+    aspectRatio: '4/3',
+    borderRadius: 'var(--r-xs)',
+    display: 'grid', placeItems: 'center',
+    fontSize: 11.5, textAlign: 'center', padding: 6,
+  };
+
+  if (!doc.present) {
     return (
-      <div style={{
-        aspectRatio: '4/3', borderRadius: 'var(--r-xs)',
-        border: '1px dashed var(--line-strong)',
-        display: 'grid', placeItems: 'center',
-        fontSize: 11.5, color: 'var(--ink-4)',
-      }}>{label} missing</div>
+      <div style={{ ...frame, border: '1px dashed var(--line-strong)', color: 'var(--ink-4)' }}>
+        {doc.label}
+        <br />not uploaded
+      </div>
     );
   }
+
+  if (doc.kind === 'unreachable') {
+    return (
+      <div className="sev-warn" style={{
+        ...frame, border: '1px solid var(--sev-line)',
+        background: 'var(--sev-wash)', color: 'var(--sev)',
+      }}>
+        {doc.label}
+        <br />unreachable
+      </div>
+    );
+  }
+
+  // Recorded as present, but this role may not see it, or the link has not
+  // arrived yet.
+  if (!viewable || !doc.url) {
+    return (
+      <div style={{ ...frame, border: '1px solid var(--line)', background: 'var(--surface-2)', color: 'var(--ink-4)' }}>
+        {loading ? '…' : <>{doc.label}<br />uploaded</>}
+      </div>
+    );
+  }
+
   return (
-    <a href={url} target="_blank" rel="noopener noreferrer"
+    <a href={doc.url} target="_blank" rel="noopener noreferrer"
+      title={`Open ${doc.label} full size`}
       style={{ display: 'block', borderRadius: 'var(--r-xs)', overflow: 'hidden', border: '1px solid var(--line)' }}>
       <div style={{
         aspectRatio: '4/3',
-        backgroundImage: `url(${url})`, backgroundSize: 'cover', backgroundPosition: 'center',
+        backgroundImage: `url(${doc.url})`,
+        backgroundSize: 'cover', backgroundPosition: 'center',
         backgroundColor: 'var(--surface-2)',
       }} />
-      <div className="faint" style={{ fontSize: 11, padding: '5px 7px', background: 'var(--surface-2)' }}>{label} ↗</div>
+      <div className="faint row-between" style={{ fontSize: 11, padding: '5px 7px', background: 'var(--surface-2)' }}>
+        <span className="truncate">{doc.label}</span>
+        <span>↗</span>
+      </div>
     </a>
   );
 }

@@ -90,9 +90,9 @@ by the user it describes — so **no DDL is required**.
 | Role | Can | Deliberately cannot |
 |---|---|---|
 | **Owner** | Everything, including granting roles | — |
-| **Dispatcher** | Run the board, assign, reassign, cancel, reach riders | Vet drivers, touch money |
+| **Dispatcher** | Run the board, assign, reassign, cancel, reach riders | Vet drivers, see identity documents, touch money |
 | **Support** | Answer riders and drivers, cancel a ride | Dispatch, vet, see money |
-| **Trust & Safety** | Vet drivers, act on screening, suspend | Dispatch or reassign rides |
+| **Trust & Safety** | Vet drivers, **view identity documents**, act on screening, suspend | Dispatch or reassign rides |
 | **Finance** | Fares, ledgers, balances, payouts | **See rider contact details** |
 | **Viewer** | Read-only operations | Any mutation, any PII |
 
@@ -101,6 +101,12 @@ resolve a live pickup; a finance analyst reconciling payouts does not.
 Redaction happens at the API's serialization boundary, so a role without
 `riders.pii` never receives the data — and rider fields aren't searchable for
 those roles either, so search can't be used as a PII oracle.
+
+**Identity documents are a permission above `drivers.read`.** A dispatcher
+needs a driver's standing to place a ride; nobody needs a scan of their licence
+to do that. Only Owner and Trust & Safety hold `drivers.documents`, and every
+retrieval is written to the audit trail — "who looked at this person's licence,
+and when" is a question worth being able to answer.
 
 Everything **fails closed**: no token, no role, an unknown role, or an
 unreachable auth service all deny. There is no shared key and no bypass.
@@ -125,7 +131,9 @@ take it?"), and the full fare breakdown.
 
 **Drivers** — the trust queue, ordered by urgency. Four independent gates shown
 as four marks, so you see *which* one is missing: account active, documents
-uploaded, screening clear, approved by a person.
+uploaded, screening clear, approved by a person. The dossier renders the
+driver's actual photo, licence and insurance certificate so identity can be
+validated on the spot — see below for how those are retrieved.
 
 **Finance** — revenue, driver balances, payouts, and **reconciliation** that
 catches the two silent failure modes in the live payout path: a completed ride
@@ -136,6 +144,34 @@ with no alarm anywhere).
 
 **Audit** — every state-changing action, who took it, and why. Cancels,
 releases, suspensions and rejections all require a typed reason.
+
+---
+
+## Driver identity documents
+
+Validating identity needs the real uploads, and the rider/driver app stores the
+three documents **two different ways**:
+
+| Document | Bucket | Visibility | Column holds |
+|---|---|---|---|
+| Profile photo | `driver-photos` | **public** — riders load it once matched | a full public URL |
+| Driver's licence | `driver-documents` | **private** | a raw storage path |
+| Insurance certificate | `driver-documents` | **private** | a raw storage path |
+
+That asymmetry is deliberate upstream, where the comment reads *"never rendered
+as an image, just checked for presence"* — true while nothing needed to look at
+them. Reviewing identity is precisely this console's job, so it has to render
+them, and a raw path into a private bucket is useless to a browser.
+
+`GET /api/admin/drivers/:id/documents` mints **short-lived signed URLs**
+server-side (5 minutes, `DOCUMENT_URL_TTL`). Raw storage paths never reach the
+browser. The endpoint requires `drivers.documents` and writes a
+`driver.documents_viewed` audit entry **before** returning the URLs, so a crash
+between the two can't produce an unrecorded disclosure.
+
+A document that is recorded on the driver but missing from storage — a
+half-failed upload — is surfaced as *unreachable* rather than rendering a
+silently broken image, because that is itself a reason not to approve someone.
 
 ---
 
@@ -189,14 +225,27 @@ npm run verify:sync -- /path/to/roverzoom
 
 ## Deploying
 
-The console and the API are separate origins, so CORS is load-bearing:
+`vercel.json` ships the console and the API as **one Vercel project**: the
+static bundle from `web/dist`, and the Express app as a serverless function via
+`api/index.mjs`, with `/api/*` rewritten to it.
 
-- Set `CORS_ORIGINS=https://admin.roverzoom.com` on the API. Empty allows all
-  origins — fine locally, never in production. The server warns loudly at boot.
-- Set `VITE_API_URL` to the deployed API origin before building the console.
-- Clear `ADMIN_BOOTSTRAP_EMAIL` once real roles are assigned.
-- Never put `SUPABASE_SERVICE_ROLE_KEY` anywhere the browser can reach. Only
-  `server/.env` gets it.
+They therefore share an origin, which is the simplest safe arrangement — leave
+`VITE_API_URL` empty and CORS never enters the picture.
+
+Set these in the Vercel project's environment variables:
+
+| Variable | Notes |
+|---|---|
+| `SUPABASE_URL` | Same project as the rider/driver app |
+| `SUPABASE_SERVICE_ROLE_KEY` | **Server only.** Never expose to the browser |
+| `ADMIN_BOOTSTRAP_EMAIL` | Set once to grant yourself owner, then clear it |
+| `VITE_SUPABASE_URL` | Public; baked into the bundle at build time |
+| `VITE_SUPABASE_ANON_KEY` | Public by design, constrained by RLS |
+| `DRIVER_CUT_PCT`, `FARE_MULTIPLIER*`, `SERVICE_TZ` | Must match the rider/driver deployment |
+
+If you instead split the API onto its own host, set `CORS_ORIGINS` to the
+console's origin and `VITE_API_URL` to the API's. `CORS_ORIGINS` empty allows
+all origins — fine locally, never in production; the server warns at boot.
 
 ---
 
@@ -213,6 +262,9 @@ Honest list of what this does **not** do yet:
 - **Admin role management is not yet a UI.** Roles are set via `app_metadata`
   in the Supabase dashboard. The `admins.manage` permission exists and is
   enforced; the screen behind it isn't built.
+- **Documents are shown, not verified.** The console renders the licence and
+  insurance so a person can check them. There is no automated document OCR or
+  authenticity check — the "approved by a person" gate means exactly that.
 - **Cancelling doesn't refund.** It sets the booking state. Stripe refunds go
   through the payments service and aren't wired here.
 - **`canceled_by` records `'system'` for admin cancellations**, because the

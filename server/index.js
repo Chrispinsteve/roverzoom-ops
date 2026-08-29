@@ -1,4 +1,20 @@
-require('dotenv').config();
+// Load .env from the server directory AND the repo root, server winning.
+//
+// Which one exists depends on how the API was started: `npm run dev:api` runs
+// with cwd = server/, a bare `node server/index.js` runs with cwd = the repo
+// root, and Vercel runs the bundled function from somewhere else entirely.
+// A bare dotenv.config() only checks cwd, so the same .env file silently
+// worked or silently didn't depending on the command used — and a missing
+// SUPABASE_SERVICE_ROLE_KEY looks exactly like a broken database rather than
+// a config path problem. Checking both removes the guesswork.
+const path = require('path');
+const dotenv = require('dotenv');
+for (const envPath of [
+  path.join(__dirname, '.env'),
+  path.join(__dirname, '..', '.env'),
+]) {
+  dotenv.config({ path: envPath });
+}
 const express = require('express');
 const cors = require('cors');
 

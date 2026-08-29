@@ -14,6 +14,10 @@
 //     real people, so it is never bundled into a general "read" grant.
 //  3. Destructive and money-moving actions are separate permissions from the
 //     reads that accompany them.
+//  4. Identity documents are their own permission, above 'drivers.read'. A
+//     dispatcher needs to know a driver's standing to place a ride; nobody
+//     needs to see a scan of their licence to do that. Only the people whose
+//     job is vetting get 'drivers.documents'.
 
 const ADMIN_ROLE_META_KEY = 'rz_admin_role';
 
@@ -25,6 +29,7 @@ const PERMISSIONS = {
   'dispatch.read':   'See the dispatch board and stuck rides',
   'dispatch.assign': 'Manually assign a ride to a specific driver',
   'drivers.read':    'Browse drivers and their trust standing',
+  'drivers.documents':'View a driver\'s licence and insurance certificate',
   'drivers.review':  'Approve or reject a driver for the road',
   'drivers.suspend': 'Suspend or reinstate a driver account',
   'riders.pii':      'Reveal rider name, phone and email',
@@ -71,8 +76,8 @@ const ROLES = {
     label: 'Trust & Safety',
     description: 'Vets drivers, acts on screening results, suspends accounts.',
     permissions: [
-      'overview.read', 'rides.read', 'drivers.read', 'drivers.review',
-      'drivers.suspend', 'riders.pii', 'audit.read',
+      'overview.read', 'rides.read', 'drivers.read', 'drivers.documents',
+      'drivers.review', 'drivers.suspend', 'riders.pii', 'audit.read',
     ],
   },
 
