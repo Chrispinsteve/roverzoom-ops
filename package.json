@@ -1,0 +1,16 @@
+{
+  "name": "roverzoom-ops",
+  "private": true,
+  "version": "0.1.0",
+  "description": "RoverZoom Admin — the operational command center.",
+  "workspaces": ["server", "web"],
+  "scripts": {
+    "dev": "npm run dev --workspace=server & npm run dev --workspace=web",
+    "dev:api": "npm run dev --workspace=server",
+    "dev:web": "npm run dev --workspace=web",
+    "build": "npm run build --workspace=web",
+    "start": "npm run start --workspace=server",
+    "test": "node --test server/test/*.test.js",
+    "verify:sync": "node server/scripts/verify-sync.js"
+  }
+}

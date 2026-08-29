@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RoverZoom Admin</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">RZ</div>
+          <div class="brand-text">
+            <strong>RoverZoom</strong>
+            <span>Command Center</span>
+          </div>
+        </div>
+
+        <nav class="sidebar-nav" aria-label="Sidebar navigation">
+          <button class="nav-item active" type="button"><span>◈</span>Overview</button>
+          <button class="nav-item" type="button"><span>▣</span>Dispatch</button>
+          <button class="nav-item" type="button"><span>◍</span>Rides</button>
+          <button class="nav-item" type="button"><span>◎</span>Drivers</button>
+          <button class="nav-item" type="button"><span>◌</span>Fleet</button>
+          <button class="nav-item" type="button"><span>△</span>Safety</button>
+          <button class="nav-item" type="button"><span>▤</span>Finance</button>
+          <button class="nav-item" type="button"><span>⚙</span>Settings</button>
+        </nav>
+
+        <div class="sidebar-panel">
+          <div class="panel-label">Operations pulse</div>
+          <div class="status-pill success">System live</div>
+          <div class="status-row">
+            <span>Active rides</span>
+            <strong>376</strong>
+          </div>
+          <div class="status-row">
+            <span>Driver online</span>
+            <strong>1,482</strong>
+          </div>
+          <div class="status-row">
+            <span>Safety flags</span>
+            <strong>07</strong>
+          </div>
+        </div>
+      </aside>
+
+      <main class="main-panel">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Operations</p>
+            <h1>Roverzoom Admin</h1>
+          </div>
+
+          <div class="topbar-actions">
+            <label class="search-box" aria-label="Search">
+              <span>⌕</span>
+              <input type="text" value="Search rides, drivers, vehicles" aria-label="Search dashboard" />
+            </label>
+            <button class="primary-button" type="button">+ New dispatch</button>
+          </div>
+        </header>
+
+        <section id="overview-stats" class="stats-grid" aria-label="Operations overview"></section>
+
+        <section class="hero-grid">
+          <div class="panel panel-wide map-panel">
+            <div class="panel-header">
+              <div>
+                <p class="panel-kicker">Dispatch</p>
+                <h2>Live network map</h2>
+              </div>
+              <button class="ghost-button" type="button">Open control room</button>
+            </div>
+
+            <div class="route-map" aria-label="Live rides map">
+              <div class="map-grid"></div>
+              <div class="map-route route-a"></div>
+              <div class="map-route route-b"></div>
+              <div class="map-route route-c"></div>
+              <div class="map-node node-one"></div>
+              <div class="map-node node-two"></div>
+              <div class="map-node node-three"></div>
+              <div class="map-node node-four"></div>
+
+              <div class="map-info top-left">
+                <span class="mini-label">Demand</span>
+                <strong>+18.6%</strong>
+              </div>
+
+              <div class="map-info bottom-right">
+                <span class="mini-label">Hot zone</span>
+                <strong>Downtown</strong>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <div>
+                <p class="panel-kicker">Live</p>
+                <h2>Activity</h2>
+              </div>
+            </div>
+            <div id="activity-feed" class="activity-feed" aria-live="polite"></div>
+          </div>
+        </section>
+
+        <section class="content-grid">
+          <div class="panel panel-wide">
+            <div class="panel-header">
+              <div>
+                <p class="panel-kicker">Queue</p>
+                <h2>Live ride queue</h2>
+              </div>
+              <button class="ghost-button" type="button">Export manifest</button>
+            </div>
+
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Ride</th>
+                    <th>Rider</th>
+                    <th>Driver</th>
+                    <th>Route</th>
+                    <th>Status</th>
+                    <th>Value</th>
+                  </tr>
+                </thead>
+                <tbody id="rides-table-body"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <div>
+                <p class="panel-kicker">Fleet</p>
+                <h2>Fleet health</h2>
+              </div>
+            </div>
+            <div id="fleet-health-list" class="mini-list"></div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <div>
+                <p class="panel-kicker">Drivers</p>
+                <h2>Compliance</h2>
+              </div>
+            </div>
+            <div id="driver-compliance" class="mini-list"></div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <div>
+                <p class="panel-kicker">Safety</p>
+                <h2>Incidents</h2>
+              </div>
+            </div>
+            <div id="incident-feed" class="mini-list"></div>
+          </div>
+
+          <div class="panel panel-wide">
+            <div class="panel-header">
+              <div>
+                <p class="panel-kicker">Finance</p>
+                <h2>Payout center</h2>
+              </div>
+            </div>
+            <div id="payout-list" class="payout-list"></div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="script.js"></script>
+  </body>
+</html>

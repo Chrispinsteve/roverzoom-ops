@@ -1,0 +1,220 @@
+/* Base layer: reset, typography, and the shared primitives every screen uses. */
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; background: none; border: none; padding: 0; }
+a { color: inherit; text-decoration: none; }
+h1, h2, h3, h4 { margin: 0; font-weight: 600; letter-spacing: -0.01em; }
+p { margin: 0; }
+
+/* One visible focus treatment everywhere. Never removed — an operations tool
+   has to be fully keyboard-drivable during an incident. */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: var(--r-xs);
+}
+:focus:not(:focus-visible) { outline: none; }
+
+::selection { background: rgba(96,165,250,0.3); }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 6px; border: 2px solid var(--bg); }
+::-webkit-scrollbar-thumb:hover { background: var(--ink-4); }
+
+/* --- Typographic roles ---------------------------------------------------- */
+
+.eyebrow {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.muted { color: var(--ink-3); }
+.faint { color: var(--ink-4); }
+
+/* Any number an operator reads down a column. */
+.num { font-variant-numeric: tabular-nums; font-feature-settings: 'tnum' 1; }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+/* Booking references are read aloud over the phone constantly. Monospace and
+   letter-spaced so RZ-8F3K2 can be dictated character by character. */
+.ref {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  letter-spacing: 0.03em;
+  color: var(--ink-2);
+}
+
+/* --- Severity ------------------------------------------------------------- */
+/* One vocabulary, four levels, applied identically to rides, drivers, money. */
+
+.sev-neutral  { --sev: var(--state-neutral);  --sev-wash: var(--state-neutral-wash);  --sev-line: var(--line-strong); }
+.sev-active   { --sev: var(--state-active);   --sev-wash: var(--state-active-wash);   --sev-line: var(--state-active-line); }
+.sev-warn     { --sev: var(--state-warn);     --sev-wash: var(--state-warn-wash);     --sev-line: var(--state-warn-line); }
+.sev-critical { --sev: var(--state-critical); --sev-wash: var(--state-critical-wash); --sev-line: var(--state-critical-line); }
+
+.dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--sev, var(--state-neutral));
+  flex: none;
+}
+/* Only 'critical' pulses, and only while it is on screen. If several things
+   pulsed, none of them would read as urgent. */
+.dot.pulse { animation: pulse 2s var(--ease) infinite; }
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--sev-wash); }
+  50%      { box-shadow: 0 0 0 5px transparent; }
+}
+
+.pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 9px 3px 7px;
+  border-radius: 999px;
+  background: var(--sev-wash, var(--state-neutral-wash));
+  border: 1px solid var(--sev-line, var(--line));
+  color: var(--sev, var(--ink-2));
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* --- Surfaces ------------------------------------------------------------- */
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+.panel-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.panel-head h2 { font-size: 14px; font-weight: 600; }
+.panel-body { padding: 16px; }
+
+/* --- Buttons -------------------------------------------------------------- */
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  height: 34px; padding: 0 14px;
+  border-radius: var(--r-xs);
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  color: var(--ink);
+  font-size: 13px; font-weight: 500;
+  transition: background 140ms var(--ease), border-color 140ms var(--ease), opacity 140ms var(--ease);
+  white-space: nowrap;
+}
+.btn:hover:not(:disabled) { background: var(--surface-3); border-color: var(--ink-4); }
+.btn:active:not(:disabled) { transform: translateY(0.5px); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.btn-primary { background: var(--ink); border-color: var(--ink); color: var(--bg); font-weight: 600; }
+.btn-primary:hover:not(:disabled) { background: #fff; border-color: #fff; }
+
+/* Destructive actions borrow the critical state colour deliberately: the same
+   red that means "a rider is stranded" also means "this will end something". */
+.btn-danger { background: var(--state-critical-wash); border-color: var(--state-critical-line); color: var(--state-critical); }
+.btn-danger:hover:not(:disabled) { background: rgba(248,113,113,0.2); }
+
+.btn-ghost { background: transparent; border-color: transparent; color: var(--ink-3); }
+.btn-ghost:hover:not(:disabled) { background: var(--surface-2); color: var(--ink); }
+
+.btn-sm { height: 28px; padding: 0 10px; font-size: 12px; }
+
+/* --- Fields --------------------------------------------------------------- */
+
+.field {
+  width: 100%; height: 34px; padding: 0 11px;
+  background: var(--bg);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-xs);
+  color: var(--ink);
+  font-size: 13px;
+  transition: border-color 140ms var(--ease);
+}
+.field::placeholder { color: var(--ink-4); }
+.field:hover { border-color: var(--ink-4); }
+textarea.field { height: auto; min-height: 76px; padding: 9px 11px; resize: vertical; line-height: 1.5; }
+
+.label { display: block; font-size: 12px; font-weight: 500; color: var(--ink-3); margin-bottom: 6px; }
+
+/* --- Tables --------------------------------------------------------------- */
+/* Operational tables: dense, quiet rules, and a whole row that is a click
+   target — an operator opening a ride should not have to hit a small link. */
+
+.table { width: 100%; border-collapse: collapse; }
+.table th {
+  position: sticky; top: 0; z-index: 1;
+  padding: 9px 12px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+  font-size: 11px; font-weight: 600;
+  letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--ink-3);
+  text-align: left;
+  white-space: nowrap;
+}
+.table td {
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--line-faint);
+  vertical-align: middle;
+}
+.table tbody tr { transition: background 100ms var(--ease); }
+.table tbody tr[data-clickable] { cursor: pointer; }
+.table tbody tr[data-clickable]:hover { background: var(--surface-2); }
+.table tbody tr[data-selected='true'] { background: var(--surface-3); }
+.table .r { text-align: right; }
+
+/* --- Empty and loading states --------------------------------------------- */
+
+.empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px; padding: 56px 24px; text-align: center;
+}
+.empty-title { font-size: 14px; font-weight: 500; color: var(--ink-2); }
+.empty-note { font-size: 13px; color: var(--ink-4); max-width: 40ch; }
+
+.skeleton {
+  background: linear-gradient(90deg, var(--surface-2) 25%, var(--surface-3) 50%, var(--surface-2) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+  border-radius: var(--r-xs);
+}
+@keyframes shimmer { to { background-position: -200% 0; } }
+
+/* --- Utilities ------------------------------------------------------------ */
+
+.row { display: flex; align-items: center; gap: 8px; }
+.row-between { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.col { display: flex; flex-direction: column; }
+.grow { flex: 1; min-width: 0; }
+.wrap { flex-wrap: wrap; }
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scroll-x { overflow-x: auto; }
+
+/* Respect a reduced-motion preference. The pulse is the only thing that
+   animates for attention, and it is exactly what motion sensitivity affects. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

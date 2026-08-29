@@ -1,0 +1,223 @@
+// Domain guarantees. These encode the promises the console makes about money,
+// trust and privacy — the three places a mistake hurts someone real.
+process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.supabase.co';
+process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
+
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+
+const money = require('../domain/money');
+const trust = require('../domain/trust');
+const lifecycle = require('../domain/lifecycle');
+const attention = require('../domain/attention');
+const roles = require('../lib/roles');
+const { riderContact, maskPhone } = require('../lib/redact');
+
+// --- money -----------------------------------------------------------------
+
+test('driver take-home is identical across promo tiers (payout.js contract)', () => {
+  // The same $100 standard fare, sold at 25% off and at 15% off. payout.js
+  // pays a share of the STANDARD fare, so the driver must earn the same
+  // either way — the promo comes out of platform margin.
+  const morning = money.rideEconomics({ fare: 75, scheduled_at: '2026-08-28T12:00:00Z', payment_method: 'card' });
+  const evening = money.rideEconomics({ fare: 85, scheduled_at: '2026-08-28T22:00:00Z', payment_method: 'card' });
+
+  assert.equal(morning.standardFare, 100);
+  assert.equal(evening.standardFare, 100);
+  assert.equal(morning.driverShare, 57.5);
+  assert.equal(evening.driverShare, 57.5);
+  assert.equal(morning.driverShare, evening.driverShare);
+  // The platform, not the driver, absorbs the deeper discount.
+  assert.ok(morning.platformShare < evening.platformShare);
+});
+
+test('driverPayout matches the 57.5%-of-standard model exactly', () => {
+  assert.equal(money.DRIVER_BASE_SHARE, 0.575);
+  assert.equal(money.driverPayout(85, '2026-08-28T22:00:00Z'), 57.5);
+});
+
+test('a cash ride records the commission the driver owes back', () => {
+  const cash = money.rideEconomics({ fare: 85, scheduled_at: '2026-08-28T22:00:00Z', payment_method: 'cash' });
+  assert.equal(cash.platformOwedByDriver, 27.5);
+  assert.equal(money.round2(cash.driverShare + cash.platformOwedByDriver), 85);
+});
+
+test('a negative cash-out balance is reported, never clamped to zero', () => {
+  // A driver who ran mostly cash owes the platform. Hiding that would make the
+  // console under-report a real debt.
+  const summary = money.summarizeEarnings([
+    { amount: 57.5, type: 'fare', payment_method: 'cash', paid_out_at: null },
+    { amount: -27.5, type: 'adjustment', payment_method: 'cash', paid_out_at: null },
+  ]);
+  assert.equal(summary.payable, -27.5);
+  assert.equal(summary.cashCollected, 57.5);
+});
+
+test('cash fares never enter the cash-out balance', () => {
+  const summary = money.summarizeEarnings([
+    { amount: 40, type: 'fare', payment_method: 'cash', paid_out_at: null },
+  ]);
+  assert.equal(summary.payable, 0);
+  assert.equal(summary.cashCollected, 40);
+});
+
+// --- trust -----------------------------------------------------------------
+
+test('an auto-activated, never-reviewed driver reads as critical', () => {
+  // This is the live default: handle_new_driver() sets status 'active' with
+  // nobody having looked. The console must never call that state healthy.
+  const standing = trust.trustStanding(
+    { status: 'active', profile_completed_at: '2026-08-01T00:00:00Z' },
+    { app_metadata: {} }
+  );
+  assert.equal(standing.key, 'unvetted_driving');
+  assert.equal(standing.risk, 'critical');
+});
+
+test('a driver is cleared only when all four factors hold', () => {
+  const base = { status: 'active', profile_completed_at: '2026-08-01T00:00:00Z' };
+  const meta = { app_metadata: { screening_status: 'clear', rz_review: { state: 'approved' } } };
+  assert.equal(trust.trustStanding(base, meta).key, 'cleared');
+
+  // Drop each factor in turn; none of them may be optional.
+  assert.notEqual(trust.trustStanding({ ...base, status: 'suspended' }, meta).key, 'cleared');
+  assert.notEqual(trust.trustStanding({ ...base, profile_completed_at: null }, meta).key, 'cleared');
+  assert.notEqual(trust.trustStanding(base, { app_metadata: { rz_review: { state: 'approved' } } }).key, 'cleared');
+  assert.notEqual(trust.trustStanding(base, { app_metadata: { screening_status: 'clear' } }).key, 'cleared');
+});
+
+test('a screening-flagged driver is called out specifically', () => {
+  const standing = trust.trustStanding(
+    { status: 'active', profile_completed_at: '2026-08-01T00:00:00Z' },
+    { app_metadata: { screening_status: 'consider', rz_review: { state: 'approved' } } }
+  );
+  assert.equal(standing.key, 'screening_consider');
+  assert.equal(standing.risk, 'critical');
+});
+
+test('review state cannot be forged through user-controlled metadata', () => {
+  // app_metadata is server-only, but guard the parse anyway: an unknown value
+  // must degrade to 'unreviewed', never be trusted through.
+  const review = trust.readReview({ app_metadata: { rz_review: { state: 'super_approved' } } });
+  assert.equal(review.state, 'unreviewed');
+});
+
+// --- permissions -----------------------------------------------------------
+
+test('permissions deny by default', () => {
+  assert.deepEqual(roles.permissionsFor(null), []);
+  assert.deepEqual(roles.permissionsFor('superuser'), []);
+  assert.equal(roles.roleOf({ app_metadata: {} }), null);
+  assert.equal(roles.roleOf({ app_metadata: { rz_admin_role: 'wizard' } }), null);
+  assert.equal(roles.can(null, 'rides.read'), false);
+});
+
+test('finance can never read rider contact details', () => {
+  assert.equal(roles.can('finance', 'finance.payout'), true);
+  assert.equal(roles.can('finance', 'riders.pii'), false);
+});
+
+test('only trust and owner may vet drivers', () => {
+  for (const role of roles.ROLE_KEYS) {
+    const expected = role === 'owner' || role === 'trust';
+    assert.equal(roles.can(role, 'drivers.review'), expected, `${role} drivers.review`);
+  }
+});
+
+test('viewer has no PII and no mutating permission', () => {
+  const mutating = ['rides.cancel', 'rides.reassign', 'dispatch.assign', 'drivers.review', 'drivers.suspend', 'finance.payout', 'admins.manage'];
+  for (const p of [...mutating, 'riders.pii']) {
+    assert.equal(roles.can('viewer', p), false, `viewer must not have ${p}`);
+  }
+});
+
+// --- redaction -------------------------------------------------------------
+
+test('rider PII is redacted at the serialization boundary', () => {
+  const booking = { rider_name: 'Maria Gonzalez', rider_phone: '+1 (561) 555-0142', rider_email: 'maria.g@example.com' };
+
+  const open = riderContact(booking, true);
+  assert.equal(open.rider_phone, '+1 (561) 555-0142');
+  assert.equal(open.pii_redacted, false);
+
+  const closed = riderContact(booking, false);
+  assert.equal(closed.pii_redacted, true);
+  assert.equal(closed.rider_name, 'Maria G.');
+  assert.ok(!closed.rider_phone.includes('561'), 'area code must not leak');
+  assert.ok(closed.rider_phone.endsWith('0142'), 'last 4 kept for identification');
+  assert.ok(!closed.rider_email.includes('maria.g'), 'local part must not leak');
+});
+
+test('redaction handles missing and malformed values', () => {
+  assert.equal(maskPhone(null), null);
+  assert.equal(maskPhone('12'), '•••');
+  const empty = riderContact({ rider_name: null, rider_phone: null, rider_email: null }, false);
+  assert.equal(empty.rider_name, null);
+});
+
+// --- lifecycle -------------------------------------------------------------
+
+test('a trip in progress cannot be canceled', () => {
+  assert.equal(lifecycle.isCancelable('in_progress'), false);
+  assert.equal(lifecycle.isCancelable('completed'), false);
+  assert.equal(lifecycle.isCancelable('arrived'), true);
+});
+
+test('the timeline is built in real chronological order', () => {
+  const events = lifecycle.buildTimeline({
+    created_at: '2026-08-28T10:00:00Z',
+    accepted_at: '2026-08-28T10:05:00Z',
+    started_at: '2026-08-28T10:20:00Z',
+    completed_at: '2026-08-28T10:45:00Z',
+  });
+  assert.deepEqual(events.map((e) => e.status), ['confirmed', 'driver_assigned', 'in_progress', 'completed']);
+});
+
+test('a cancellation appears in the timeline with its actor and reason', () => {
+  const events = lifecycle.buildTimeline({
+    created_at: '2026-08-28T10:00:00Z',
+    canceled_at: '2026-08-28T10:10:00Z',
+    canceled_by: 'rider',
+    cancel_reason: 'changed plans',
+  });
+  const cancel = events.find((e) => e.status === 'canceled');
+  assert.equal(cancel.by, 'rider');
+  assert.equal(cancel.reason, 'changed plans');
+});
+
+// --- attention -------------------------------------------------------------
+
+test('a manual-dispatch ride is always critical and names its reference', () => {
+  const feed = attention.buildFeed({
+    now: '2026-08-28T14:00:00Z',
+    bookings: [{ id: '1', reference: 'RZ-AAAAA', status: 'manual_dispatch_required', driver_id: null, scheduled_at: '2026-08-28T13:52:00Z' }],
+    drivers: [],
+  });
+  assert.equal(feed.counts.critical, 1);
+  assert.equal(feed.items[0].reference, 'RZ-AAAAA');
+  assert.equal(feed.items[0].action, 'assign');
+});
+
+test('critical items always outrank warnings', () => {
+  const feed = attention.buildFeed({
+    now: '2026-08-28T14:00:00Z',
+    bookings: [
+      { id: '1', reference: 'RZ-WARN', status: 'in_progress', driver_id: 'd', started_at: '2026-08-28T13:00:00Z', duration_minutes: 20 },
+      { id: '2', reference: 'RZ-CRIT', status: 'confirmed', driver_id: null, scheduled_at: '2026-08-28T13:30:00Z' },
+    ],
+    drivers: [],
+  });
+  assert.equal(feed.items[0].severity, 'critical');
+  assert.equal(feed.items[0].reference, 'RZ-CRIT');
+});
+
+test('a quiet board produces an empty feed', () => {
+  // "Nothing needs you" has to be a real, reachable answer or operators stop
+  // trusting the feed entirely.
+  const feed = attention.buildFeed({
+    now: '2026-08-28T14:00:00Z',
+    bookings: [{ id: '1', reference: 'RZ-OK', status: 'in_progress', driver_id: 'd', started_at: '2026-08-28T13:55:00Z', duration_minutes: 30 }],
+    drivers: [{ standing: { key: 'cleared' } }],
+  });
+  assert.equal(feed.counts.total, 0);
+});

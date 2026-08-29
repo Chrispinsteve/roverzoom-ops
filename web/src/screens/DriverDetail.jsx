@@ -1,0 +1,335 @@
+import { useState } from 'react';
+import { api } from '../lib/api';
+import { useApi } from '../lib/useApi';
+import { Sheet, Detail, Pill, Loading, ErrorNote, Restricted } from '../components/ui';
+import { money, dayAndClock, relative } from '../lib/format';
+
+// The dossier a vetting decision is actually made from. Everything a reviewer
+// needs is on one surface: who they are, what they uploaded, what the
+// background check said, what they have driven, and what they are owed.
+export function DriverDetail({ driverId, onClose, onChanged }) {
+  const { data, loading, error, reload } = useApi(() => api.driver(driverId), { deps: [driverId] });
+  const [dialog, setDialog] = useState(null); // 'review' | 'suspend' | 'reinstate'
+
+  const d = data?.driver;
+
+  return (
+    <>
+      <Sheet
+        open
+        onClose={onClose}
+        width={640}
+        title={loading ? 'Loading…' : (
+          <div className="row" style={{ gap: 10 }}>
+            <span style={{ fontSize: 15, fontWeight: 600 }}>{d?.name}</span>
+            {d && <Pill level={d.standing.risk}>{d.standing.label}</Pill>}
+          </div>
+        )}
+        subtitle={d ? `${d.phone}${d.email ? ` · ${d.email}` : ''}` : undefined}
+        footer={d && data.actions && (
+          <>
+            {data.actions.canSuspend && (
+              d.status === 'suspended'
+                ? <button className="btn" onClick={() => setDialog('reinstate')}>Reinstate</button>
+                : <button className="btn btn-danger" onClick={() => setDialog('suspend')}>Suspend</button>
+            )}
+            {data.actions.canReview && (
+              <button className="btn btn-primary" onClick={() => setDialog('review')}>
+                {d.trust.humanApproved ? 'Change decision' : 'Review'}
+              </button>
+            )}
+            <button className="btn" onClick={onClose}>Close</button>
+          </>
+        )}
+      >
+        {loading && <Loading rows={5} />}
+        {error && <ErrorNote error={error} onRetry={reload} />}
+
+        {d && (
+          <>
+            {/* The four gates, spelled out. This is the heart of the screen:
+                it answers "why is this person's standing what it is?" without
+                the reviewer having to infer it. */}
+            <Section title="Clearance">
+              <div className="col" style={{ gap: 7 }}>
+                <Gate on={d.trust.accountActive} label="Account is active"
+                  detail={`drivers.status = ${d.status}`} />
+                <Gate on={d.trust.documentsComplete} label="Documents uploaded"
+                  detail={d.profile_completed_at ? `completed ${relative(d.profile_completed_at)}` : 'photo, licence and insurance required'} />
+                <Gate on={d.trust.screeningClear} label="Background check clear"
+                  detail={`Checkr: ${d.trust.screening.status.replace('_', ' ')}`} />
+                <Gate on={d.trust.humanApproved} label="Approved by a person"
+                  detail={d.trust.review.at
+                    ? `${d.trust.review.state} by ${d.trust.review.by} · ${relative(d.trust.review.at)}`
+                    : 'nobody has reviewed this driver'} />
+              </div>
+
+              {d.trust.review.note && (
+                <div style={{
+                  marginTop: 12, padding: '10px 12px',
+                  background: 'var(--surface-2)', border: '1px solid var(--line)',
+                  borderRadius: 'var(--r-xs)', fontSize: 12.5, lineHeight: 1.5,
+                }}>
+                  <div className="eyebrow" style={{ marginBottom: 4 }}>Review note</div>
+                  {d.trust.review.note}
+                </div>
+              )}
+            </Section>
+
+            <Section title="Documents">
+              {data.documents.completedAt ? (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 9 }}>
+                  <Document label="Photo" url={data.documents.photo_url} />
+                  <Document label="Licence" url={data.documents.license_photo_url} />
+                  <Document label="Insurance" url={data.documents.insurance_photo_url} />
+                </div>
+              ) : (
+                <div className="faint" style={{ fontSize: 13 }}>
+                  This driver has not finished uploading their documents, so they cannot see ride requests.
+                </div>
+              )}
+            </Section>
+
+            <Section title="Details">
+              <Detail label="Vehicle">{d.vehicle || '—'}</Detail>
+              <Detail label="Plate" mono>{d.vehicle_plate}</Detail>
+              <Detail label="Rating">{d.rating != null ? `${Number(d.rating).toFixed(2)} ★` : '—'}</Detail>
+              <Detail label="Rides">{d.rides_completed}</Detail>
+              <Detail label="Joined">{dayAndClock(d.created_at)}</Detail>
+              <Detail label="Last sign in">{d.last_sign_in_at ? relative(d.last_sign_in_at) : 'never'}</Detail>
+              <Detail label="Location">
+                {d.locationFreshness.state === 'never'
+                  ? <span className="faint">never reported</span>
+                  : `${d.locationFreshness.state} · ${relative(d.location_updated_at)}`}
+              </Detail>
+              {!d.auth_present && (
+                <Detail label="Account">
+                  <span style={{ color: 'var(--state-warn)' }}>
+                    No linked sign-in account — a review cannot be recorded against this driver.
+                  </span>
+                </Detail>
+              )}
+            </Section>
+
+            {data.earnings ? (
+              <Section title="Earnings">
+                <Detail label="Lifetime">{money(data.earnings.lifetime)}</Detail>
+                <Detail label="Cash collected">{money(data.earnings.cashCollected)}</Detail>
+                <Detail label="Paid out">{money(data.earnings.paidOut)}</Detail>
+                <Detail label={data.earnings.payable < 0 ? 'Owes platform' : 'Payable now'}>
+                  <span style={{ color: data.earnings.payable < 0 ? 'var(--state-warn)' : 'var(--ink)', fontWeight: 600 }}>
+                    {money(Math.abs(data.earnings.payable))}
+                  </span>
+                  {data.earnings.payable < 0 && (
+                    <span className="faint"> · cash commission exceeds unpaid card earnings</span>
+                  )}
+                </Detail>
+              </Section>
+            ) : (
+              <Section title="Earnings"><Restricted what="driver earnings" /></Section>
+            )}
+
+            <Section title={`Recent rides · ${data.activity.rides.length}`}>
+              {data.activity.rides.length === 0 ? (
+                <div className="faint" style={{ fontSize: 13 }}>No rides yet.</div>
+              ) : (
+                <div className="col" style={{ gap: 4 }}>
+                  {data.activity.rides.slice(0, 12).map((r) => (
+                    <div key={r.id} className="row" style={{ gap: 10, fontSize: 12.5, padding: '3px 0' }}>
+                      <span className="ref" style={{ width: 74, flex: 'none' }}>{r.reference}</span>
+                      <span className="grow truncate faint">{r.statusLabel}</span>
+                      <span className="faint num" style={{ flex: 'none' }}>{dayAndClock(r.scheduled_at)}</span>
+                      <span className="num" style={{ width: 62, textAlign: 'right', flex: 'none' }}>{money(r.fare)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Section>
+          </>
+        )}
+      </Sheet>
+
+      {dialog && d && (
+        <DecisionDialog
+          kind={dialog}
+          driver={d}
+          onClose={() => setDialog(null)}
+          onDone={() => { setDialog(null); reload(); onChanged?.(); }}
+        />
+      )}
+    </>
+  );
+}
+
+function Section({ title, children }) {
+  return (
+    <section style={{ marginBottom: 22 }}>
+      <div className="eyebrow" style={{ marginBottom: 9, paddingBottom: 7, borderBottom: '1px solid var(--line)' }}>{title}</div>
+      {children}
+    </section>
+  );
+}
+
+function Gate({ on, label, detail }) {
+  return (
+    <div className={`row ${on ? 'sev-active' : 'sev-warn'}`} style={{ gap: 10, alignItems: 'flex-start' }}>
+      <span style={{
+        width: 17, height: 17, borderRadius: '50%', flex: 'none', marginTop: 1,
+        display: 'grid', placeItems: 'center', fontSize: 10, fontWeight: 700,
+        background: 'var(--sev-wash)', border: '1px solid var(--sev-line)', color: 'var(--sev)',
+      }}>{on ? '✓' : '!'}</span>
+      <span className="col" style={{ gap: 1, minWidth: 0 }}>
+        <span style={{ fontSize: 13 }}>{label}</span>
+        <span className="faint" style={{ fontSize: 11.5 }}>{detail}</span>
+      </span>
+    </div>
+  );
+}
+
+function Document({ label, url }) {
+  if (!url) {
+    return (
+      <div style={{
+        aspectRatio: '4/3', borderRadius: 'var(--r-xs)',
+        border: '1px dashed var(--line-strong)',
+        display: 'grid', placeItems: 'center',
+        fontSize: 11.5, color: 'var(--ink-4)',
+      }}>{label} missing</div>
+    );
+  }
+  return (
+    <a href={url} target="_blank" rel="noopener noreferrer"
+      style={{ display: 'block', borderRadius: 'var(--r-xs)', overflow: 'hidden', border: '1px solid var(--line)' }}>
+      <div style={{
+        aspectRatio: '4/3',
+        backgroundImage: `url(${url})`, backgroundSize: 'cover', backgroundPosition: 'center',
+        backgroundColor: 'var(--surface-2)',
+      }} />
+      <div className="faint" style={{ fontSize: 11, padding: '5px 7px', background: 'var(--surface-2)' }}>{label} ↗</div>
+    </a>
+  );
+}
+
+// Approving or rejecting someone changes whether they can earn a living. The
+// dialog states the consequence in plain language before it asks.
+function DecisionDialog({ kind, driver, onClose, onDone }) {
+  const [decision, setDecision] = useState('approved');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  const isReview = kind === 'review';
+  const isSuspend = kind === 'suspend';
+  const needsNote = (isReview && decision === 'rejected') || !isReview;
+
+  async function submit() {
+    setBusy(true); setError(null);
+    try {
+      if (isReview) await api.reviewDriver(driver.id, { decision, note });
+      else await api.setDriverStatus(driver.id, { status: isSuspend ? 'suspended' : 'active', reason: note });
+      onDone();
+    } catch (err) {
+      setError(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const title = isReview ? `Review ${driver.name}` : isSuspend ? `Suspend ${driver.name}` : `Reinstate ${driver.name}`;
+
+  return (
+    <Sheet
+      open onClose={onClose} width={470} title={title}
+      footer={
+        <>
+          <button className="btn" onClick={onClose} disabled={busy}>Cancel</button>
+          <button
+            className={`btn ${(isReview && decision === 'approved') || kind === 'reinstate' ? 'btn-primary' : 'btn-danger'}`}
+            disabled={busy || (needsNote && !note.trim())}
+            onClick={submit}
+          >
+            {busy ? 'Saving…' : isReview ? (decision === 'approved' ? 'Approve driver' : 'Reject driver') : isSuspend ? 'Suspend' : 'Reinstate'}
+          </button>
+        </>
+      }
+    >
+      {error && <div style={{ marginBottom: 14 }}><ErrorNote error={error} /></div>}
+      {error?.body?.rides?.length > 0 && (
+        <div className="sev-warn" style={{
+          padding: '10px 12px', marginBottom: 14, borderRadius: 'var(--r-xs)',
+          background: 'var(--sev-wash)', border: '1px solid var(--sev-line)', fontSize: 12.5,
+        }}>
+          Live rides that must be resolved first:{' '}
+          {error.body.rides.map((r) => r.reference).join(', ')}
+        </div>
+      )}
+
+      {isReview && (
+        <div style={{ marginBottom: 16 }}>
+          <label className="label">Decision</label>
+          <div className="col" style={{ gap: 7 }}>
+            <Choice
+              checked={decision === 'approved'} onChange={() => setDecision('approved')}
+              title="Approve" note="Records that a person checked this driver. Activates them if they were pending."
+            />
+            <Choice
+              checked={decision === 'rejected'} onChange={() => setDecision('rejected')}
+              title="Reject" note="Records the rejection AND suspends the account, so they stop receiving rides immediately."
+              danger
+            />
+          </div>
+        </div>
+      )}
+
+      {!isReview && (
+        <p className="muted" style={{ fontSize: 13, marginBottom: 16, lineHeight: 1.55 }}>
+          {isSuspend
+            ? 'They are taken offline immediately and can no longer accept rides. Their earnings history is untouched.'
+            : 'They can accept rides again, subject to their documents and screening.'}
+        </p>
+      )}
+
+      <label className="label">
+        {isReview ? (decision === 'rejected' ? 'Reason (required)' : 'Note (optional)') : 'Reason (required)'}
+      </label>
+      <textarea
+        className="field" value={note} onChange={(e) => setNote(e.target.value)}
+        placeholder={decision === 'rejected' || !isReview
+          ? 'Insurance certificate expired in June; asked them to re-upload.'
+          : 'Licence and insurance both verified against the DMV record.'}
+        autoFocus
+      />
+      <div className="faint" style={{ fontSize: 11.5, marginTop: 7 }}>
+        Recorded in the audit trail with your name.
+      </div>
+    </Sheet>
+  );
+}
+
+function Choice({ checked, onChange, title, note, danger }) {
+  return (
+    <button
+      onClick={onChange}
+      className={checked && danger ? 'sev-critical' : ''}
+      style={{
+        display: 'flex', gap: 10, alignItems: 'flex-start', textAlign: 'left',
+        padding: '11px 13px', borderRadius: 'var(--r-sm)',
+        border: `1px solid ${checked ? (danger ? 'var(--sev-line)' : 'var(--ink-4)') : 'var(--line)'}`,
+        background: checked ? (danger ? 'var(--sev-wash)' : 'var(--surface-3)') : 'var(--surface)',
+        transition: 'all 130ms var(--ease)',
+      }}
+    >
+      <span style={{
+        width: 15, height: 15, borderRadius: '50%', flex: 'none', marginTop: 2,
+        border: `1.5px solid ${checked ? (danger ? 'var(--sev)' : 'var(--ink)') : 'var(--line-strong)'}`,
+        display: 'grid', placeItems: 'center',
+      }}>
+        {checked && <span style={{ width: 7, height: 7, borderRadius: '50%', background: danger ? 'var(--sev)' : 'var(--ink)' }} />}
+      </span>
+      <span className="col" style={{ gap: 2 }}>
+        <span style={{ fontSize: 13, fontWeight: 500 }}>{title}</span>
+        <span className="faint" style={{ fontSize: 12, lineHeight: 1.45 }}>{note}</span>
+      </span>
+    </button>
+  );
+}
