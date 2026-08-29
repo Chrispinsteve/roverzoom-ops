@@ -27,41 +27,51 @@ To fix:
 
 ---
 
-## 2. Add funnel tracking
+## 2. Add funnel tracking — patch provided
 
-Copy `roverzoom-track.js` to `roverzoom/frontend/src/lib/track.js`, then set in
+**`rider-app.patch` in this folder does the whole thing.** Apply it in the
+rider/driver repo:
+
+```bash
+cd /path/to/roverzoom
+git apply /path/to/roverzoom-ops/integration/rider-app.patch
+npm run build          # verify
+```
+
+It adds `frontend/src/lib/track.js` and instruments `KioskApp.jsx`. Then set in
 `frontend/.env`:
 
 ```
 VITE_OPS_API_URL=https://<your-ops-console-domain>
 ```
 
-And on the ops API, add the rider site to the CORS allowlist:
+and add the rider site to the ops API's allowlist:
 
 ```
 CORS_ORIGINS=https://admin.roverzoom.com,https://www.roverzoom.com
 ```
 
-### Where to call it
+### What the patch changes, and why only one file
 
-Seven calls. Each is one line, and each is safe to add anywhere in the relevant
-component — `track()` never throws.
+Every booking field in the kiosk flow already funnels through a single `patch()`
+function in `KioskApp.jsx`, so three of the seven steps are recorded in one
+place rather than scattered across the screens:
 
-| Step | Where | Call |
-|---|---|---|
-| `visit` | `App.jsx`, once on mount | `track('visit')` |
-| `booking_started` | Landing, when Form **or** AI is chosen | `track('booking_started')` |
-| `pickup_set` | After a pickup address is confirmed | `track('pickup_set')` |
-| `dropoff_set` | After a destination is confirmed | `track('dropoff_set')` |
-| `quote_viewed` | When the fare is first shown | `track('quote_viewed', { value: fare })` |
-| `checkout_started` | On reaching payment selection | `track('checkout_started')` |
-| `booked` | On the confirmation screen | `track('booked', { bookingRef: booking.reference })` |
+| Step | Where |
+|---|---|
+| `visit` | mount effect |
+| `booking_started` | "Book here" **and** "Talk to the assistant" |
+| `pickup_set` · `dropoff_set` · `quote_viewed` | inside `patch()`, with the fare |
+| `checkout_started` | leaving PhoneStep for PayStep |
+| `booked` | `onConfirmed`, beside the existing Google Ads conversion — **and** in `closeAssistant`, because the voice flow books without ever passing through PayStep |
 
-`quote_viewed` carries the fare on purpose: it lets the console compare the
-price abandoners saw against the price bookers saw. If abandoners consistently
-see higher fares, the problem is pricing, not the flow.
+Two details worth knowing if you review the diff:
 
----
+- The import is aliased to `trackEvent`. `KioskApp.jsx` already has a local
+  `track()` for the ride-tracking deep link; importing as `track` would shadow
+  it and silently break those links.
+- Steps fire at most once per visit, guarded by a ref. Without that, `patch()`
+  would re-report `pickup_set` on every keystroke that touches the address.
 
 ## 3. Tag your non-Google links
 
@@ -95,7 +105,7 @@ Instagram, Nextdoor, Yelp, Tripadvisor, Reddit and the major search engines.
 
 ---
 
-## 4. Install the table
+## 4. Install the tables
 
 In the ops repo, against the same Supabase project:
 

@@ -271,7 +271,8 @@ rate-limited per instance. **No personal data is collected** — no name, phone,
 email, address, IP or cross-visit identifier. Region comes from the edge at city
 granularity.
 
-See `integration/README.md` for the seven one-line calls to add to the rider app.
+`integration/rider-app.patch` instruments the rider app in one file — apply it with
+`git apply` in the rider/driver repo. See `integration/README.md`.
 
 ---
 
@@ -288,7 +289,7 @@ web/                   React + Vite console
   src/design/          tokens.css · base.css  ← the whole design system
   src/screens/         one file per surface
 db/                    001_admin_audit_log.sql · 002_site_events.sql · 003_site_events_attribution.sql
-integration/           the rider-app tracking snippet + how to wire it
+integration/           rider-app.patch (git apply) + wiring notes
 archive/               the original static prototype, kept for reference
 ```
 
