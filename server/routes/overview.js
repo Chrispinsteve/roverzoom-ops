@@ -110,6 +110,7 @@ router.get('/overview', requireAdmin, requirePermission('overview.read'), async 
         cleared: drivers.filter((d) => d.standing.key === 'cleared').length,
         unvettedDriving: drivers.filter((d) => d.standing.key === 'unvetted_driving').length,
         awaitingReview: drivers.filter((d) => d.standing.key === 'awaiting_review').length,
+        provisional: drivers.filter((d) => d.standing.key === 'provisional').length,
         flagged: drivers.filter((d) => d.standing.key === 'screening_consider').length,
         suspended: drivers.filter((d) => d.standing.key === 'suspended').length,
       },

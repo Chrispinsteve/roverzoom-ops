@@ -200,8 +200,10 @@ async function revoke(email) {
     return;
   }
 
-  const app_metadata = { ...existing };
-  delete app_metadata[ADMIN_ROLE_META_KEY];
+  // Set to null, never `delete`: Supabase merges app_metadata on update, so
+  // omitting a key leaves the previous value in place — the role would not
+  // actually be revoked.
+  const app_metadata = { ...existing, [ADMIN_ROLE_META_KEY]: null };
 
   const { error } = await supabase.auth.admin.updateUserById(user.id, { app_metadata });
   if (error) throw error;

@@ -19,6 +19,18 @@
 
 const REVIEW_META_KEY = 'rz_review';
 
+// A deliberate, time-boxed permission to carry passengers BEFORE the
+// background check is complete.
+//
+// This exists because the alternative is worse. Today a driver can already
+// drive with no screening at all — nothing in the rider/driver API consults
+// it — so the practical choice is not "allow or forbid", it is "unrecorded
+// accident or recorded decision". This makes it a decision: someone's name,
+// a reason, and above all an EXPIRY, so a provisional grant cannot silently
+// become permanent. That expiry is the entire point; a flag without one would
+// just be the original hole with better manners.
+const PROVISIONAL_META_KEY = 'rz_provisional';
+
 // What an operator decided about a driver.
 const REVIEW_STATES = ['unreviewed', 'approved', 'rejected'];
 
@@ -28,12 +40,35 @@ const SCREENING_STATES = ['not_started', 'pending', 'clear', 'consider'];
 
 function readReview(authUser) {
   const meta = (authUser && authUser.app_metadata) || {};
-  const review = meta[REVIEW_META_KEY] || {};
+  const review = meta[REVIEW_META_KEY] || {}; // null-safe: revocation writes null
   return {
     state: REVIEW_STATES.includes(review.state) ? review.state : 'unreviewed',
     by: review.by || null,          // admin email who decided
     at: review.at || null,          // ISO timestamp of the decision
     note: review.note || null,      // free-text rationale, shown in the audit trail
+  };
+}
+
+function readProvisional(authUser, now = Date.now()) {
+  const meta = (authUser && authUser.app_metadata) || {};
+  // May be null: revoking sets the key to null rather than deleting it,
+  // because Supabase merges app_metadata on update.
+  const p = meta[PROVISIONAL_META_KEY];
+  if (!p || !p.until) return { active: false, granted: false };
+
+  const untilMs = new Date(p.until).getTime();
+  if (isNaN(untilMs)) return { active: false, granted: false };
+
+  const expired = untilMs <= now;
+  return {
+    granted: true,
+    active: !expired,
+    expired,
+    until: p.until,
+    by: p.by || null,
+    at: p.at || null,
+    reason: p.reason || null,
+    daysLeft: expired ? 0 : Math.ceil((untilMs - now) / 86400000),
   };
 }
 
@@ -50,9 +85,10 @@ function readScreening(authUser) {
 // The four independent facts that decide whether a driver should be carrying
 // passengers. Kept separate so the UI can show WHICH one is missing rather
 // than a single opaque pass/fail.
-function trustFactors(driver, authUser) {
+function trustFactors(driver, authUser, now = Date.now()) {
   const review = readReview(authUser);
   const screening = readScreening(authUser);
+  const provisional = readProvisional(authUser, now);
   return {
     // Can the API currently be called on their behalf? (requireActiveDriver)
     accountActive: driver.status === 'active',
@@ -62,8 +98,12 @@ function trustFactors(driver, authUser) {
     screeningClear: screening.status === 'clear',
     // Did a human at RoverZoom actually approve them?
     humanApproved: review.state === 'approved',
+    // A live provisional grant. Never a substitute for screeningClear — it
+    // records that the gap is known and accepted, not that it is closed.
+    provisionallyAuthorized: provisional.active,
     review,
     screening,
+    provisional,
   };
 }
 
@@ -81,7 +121,11 @@ function isFullyVetted(factors) {
 function isUnvettedButDriving(factors) {
   return factors.accountActive
     && factors.documentsComplete   // this is all the API actually requires
-    && !(factors.humanApproved && factors.screeningClear);
+    && !(factors.humanApproved && factors.screeningClear)
+    // A live provisional grant moves a driver out of this bucket, because
+    // someone accountable has looked and decided. An EXPIRED one does not —
+    // it lands them straight back here, which is what makes the expiry real.
+    && !factors.provisionallyAuthorized;
 }
 
 // One label per driver for list views, ordered by operational urgency.
@@ -105,6 +149,19 @@ function trustStanding(driver, authUser) {
   if (isFullyVetted(f)) {
     return { key: 'cleared', label: 'Cleared', risk: 'active', factors: f };
   }
+  // Deliberately 'warn', not 'active': this driver is working with an
+  // incomplete check. It is an accepted risk, not an absence of risk, and the
+  // console should keep saying so until screening actually clears.
+  if (f.provisionallyAuthorized) {
+    return {
+      key: 'provisional',
+      label: f.provisional.daysLeft <= 3
+        ? `Provisional · ${f.provisional.daysLeft}d left`
+        : 'Provisional',
+      risk: 'warn',
+      factors: f,
+    };
+  }
   if (!f.documentsComplete) {
     return { key: 'awaiting_documents', label: 'Awaiting documents', risk: 'warn', factors: f };
   }
@@ -120,14 +177,24 @@ const STANDING_PRIORITY = {
   screening_consider: 1,
   awaiting_review: 2,
   screening_pending: 3,
-  awaiting_documents: 4,
-  cleared: 5,
-  rejected: 6,
-  suspended: 7,
+  provisional: 4,
+  awaiting_documents: 5,
+  cleared: 6,
+  rejected: 7,
+  suspended: 8,
 };
+
+// A provisional grant must not be open-ended, and must not be so long that
+// nobody revisits it. Callers choose within this range.
+const PROVISIONAL_MAX_DAYS = Number(process.env.PROVISIONAL_MAX_DAYS) || 90;
+const PROVISIONAL_DEFAULT_DAYS = Number(process.env.PROVISIONAL_DEFAULT_DAYS) || 30;
 
 module.exports = {
   REVIEW_META_KEY,
+  PROVISIONAL_META_KEY,
+  PROVISIONAL_MAX_DAYS,
+  PROVISIONAL_DEFAULT_DAYS,
+  readProvisional,
   REVIEW_STATES,
   SCREENING_STATES,
   readReview,

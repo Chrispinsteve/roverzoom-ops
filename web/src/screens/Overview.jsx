@@ -68,6 +68,7 @@ export function Overview({ onOpenRide, onNavigate }) {
               level={trust.flagged > 0 ? 'critical' : 'neutral'}
               onClick={() => onNavigate('drivers', { standing: 'screening_consider' })} />
             <Metric label="Awaiting review" value={count(trust.awaitingReview)}
+              sub={trust.provisional > 0 ? `${trust.provisional} driving provisionally` : undefined}
               level={trust.awaitingReview > 0 ? 'warn' : 'neutral'}
               onClick={() => onNavigate('drivers', { standing: 'awaiting_review' })} />
             <Metric label="Cleared" value={count(trust.cleared)}

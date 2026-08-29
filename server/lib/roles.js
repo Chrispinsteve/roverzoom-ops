@@ -102,6 +102,8 @@ const ROLE_KEYS = Object.keys(ROLES);
 
 function roleOf(authUser) {
   const meta = (authUser && authUser.app_metadata) || {};
+  // May be null rather than absent — revoking sets the key to null, since
+  // Supabase merges app_metadata and a deleted key would simply persist.
   const role = meta[ADMIN_ROLE_META_KEY];
   return ROLE_KEYS.includes(role) ? role : null;
 }

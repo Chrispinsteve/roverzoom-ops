@@ -5,7 +5,7 @@ const { requireAdmin, requirePermission } = require('../middleware/requireAdmin'
 const { can } = require('../lib/roles');
 const { auditor } = require('../lib/audit');
 const { withTrust, sortByUrgency, getDriverWithTrust, locationFreshness, invalidate } = require('../lib/directory');
-const { REVIEW_META_KEY, STANDING_PRIORITY } = require('../domain/trust');
+const { REVIEW_META_KEY, PROVISIONAL_META_KEY, PROVISIONAL_MAX_DAYS, PROVISIONAL_DEFAULT_DAYS, STANDING_PRIORITY } = require('../domain/trust');
 const { summarizeEarnings } = require('../domain/money');
 const { resolveForDriver, presenceForDriver } = require('../lib/documents');
 const { ACTIVE_STATUSES, STATUS_LABEL } = require('../domain/lifecycle');
@@ -102,7 +102,9 @@ router.get('/drivers/:id', requireAdmin, requirePermission('drivers.read'), asyn
         canReview: can(req.admin.role, 'drivers.review'),
         canSuspend: can(req.admin.role, 'drivers.suspend'),
         canViewDocuments: can(req.admin.role, 'drivers.documents'),
+        canGrantProvisional: can(req.admin.role, 'drivers.review'),
       },
+      provisionalLimits: { maxDays: PROVISIONAL_MAX_DAYS, defaultDays: PROVISIONAL_DEFAULT_DAYS },
     });
   } catch (err) {
     console.error('[drivers:get]', err.message);
@@ -215,6 +217,117 @@ router.post('/drivers/:id/review', requireAdmin, requirePermission('drivers.revi
   } catch (err) {
     console.error('[drivers:review]', err.message);
     res.status(500).json({ error: 'Could not record the review.' });
+  }
+});
+
+// POST /api/admin/drivers/:id/provisional
+//   { days, reason }   grant or extend
+//   { revoke: true, reason }
+//
+// Lets a driver work while their background check is outstanding. Deliberately
+// NOT a way to mark someone screened: it records that the gap is known and
+// accepted, by a named person, until a specific date. The console keeps showing
+// them as 'warn' for the whole window, and the moment it lapses they return to
+// 'critical' on their own.
+router.post('/drivers/:id/provisional', requireAdmin, requirePermission('drivers.review'), async (req, res) => {
+  const audit = auditor(req);
+  const { days, reason, revoke } = req.body || {};
+
+  if (!reason || !String(reason).trim()) {
+    return res.status(422).json({ error: 'A reason is required.', code: 'reason_required' });
+  }
+
+  try {
+    const driver = await getDriverWithTrust(req.params.id);
+    if (!driver) return res.status(404).json({ error: 'Driver not found.' });
+    if (!driver.auth_user_id) {
+      return res.status(409).json({
+        error: 'This driver has no linked account, so an authorization cannot be recorded against them.',
+        code: 'no_auth_user',
+      });
+    }
+
+    const { data: userRes, error: getErr } = await supabase.auth.admin.getUserById(driver.auth_user_id);
+    if (getErr) throw getErr;
+    const app_metadata = { ...((userRes && userRes.user && userRes.user.app_metadata) || {}) };
+
+    if (revoke) {
+      if (!app_metadata[PROVISIONAL_META_KEY]) {
+        return res.status(409).json({ error: 'This driver has no provisional authorization.', code: 'no_grant' });
+      }
+      // Supabase merges the app_metadata you send rather than replacing it, so
+      // deleting the key from a local copy is a no-op — the old value survives
+      // and the driver stays authorized. Setting it to null is what actually
+      // removes it.
+      app_metadata[PROVISIONAL_META_KEY] = null;
+      const { error } = await supabase.auth.admin.updateUserById(driver.auth_user_id, { app_metadata });
+      if (error) throw error;
+
+      await audit({
+        action: 'driver.provisional_revoked', subjectType: 'driver', subjectId: driver.id,
+        summary: `Revoked provisional authorization for ${driver.name}`,
+        detail: { reason: String(reason).trim() },
+      });
+
+      invalidate();
+      return res.json({ driver: publicDriver(await getDriverWithTrust(driver.id)) });
+    }
+
+    // NOT `Number(days) || DEFAULT`: 0 is falsy, so an explicit `days: 0`
+    // silently became the 30-day default instead of being rejected. Only a
+    // genuinely absent value falls back.
+    const omitted = days === undefined || days === null || days === '';
+    const requested = omitted ? PROVISIONAL_DEFAULT_DAYS : Number(days);
+    if (!Number.isFinite(requested) || requested < 1 || requested > PROVISIONAL_MAX_DAYS) {
+      return res.status(422).json({
+        error: `Choose between 1 and ${PROVISIONAL_MAX_DAYS} days.`,
+        code: 'bad_duration',
+        max: PROVISIONAL_MAX_DAYS,
+      });
+    }
+
+    // Suspended and rejected drivers are not eligible: this is a shortcut past
+    // an INCOMPLETE check, never a way around a decision already made that
+    // someone should not be driving.
+    if (driver.status === 'suspended' || driver.trust.review.state === 'rejected') {
+      return res.status(409).json({
+        error: `${driver.name} has been ${driver.status === 'suspended' ? 'suspended' : 'rejected'}. Reinstate them first if that was wrong.`,
+        code: 'not_eligible',
+      });
+    }
+    if (!driver.trust.documentsComplete) {
+      return res.status(409).json({
+        error: `${driver.name} has not uploaded their photo, licence and insurance yet.`,
+        code: 'documents_incomplete',
+      });
+    }
+
+    const until = new Date(Date.now() + requested * 86400000).toISOString();
+    app_metadata[PROVISIONAL_META_KEY] = {
+      until,
+      by: req.admin.email,
+      at: new Date().toISOString(),
+      reason: String(reason).trim(),
+    };
+
+    const { error } = await supabase.auth.admin.updateUserById(driver.auth_user_id, { app_metadata });
+    if (error) throw error;
+
+    await audit({
+      action: 'driver.provisional_granted', subjectType: 'driver', subjectId: driver.id,
+      summary: `Authorized ${driver.name} to drive for ${requested} days pending screening`,
+      detail: {
+        until, days: requested, reason: String(reason).trim(),
+        screeningStatus: driver.trust.screening.status,
+        previousStanding: driver.standing.key,
+      },
+    });
+
+    invalidate();
+    res.json({ driver: publicDriver(await getDriverWithTrust(driver.id)), until, days: requested });
+  } catch (err) {
+    console.error('[drivers:provisional]', err.message);
+    res.status(500).json({ error: 'Could not record the authorization.' });
   }
 });
 

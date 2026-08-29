@@ -47,11 +47,25 @@ app.use((req, res, next) => {
   next();
 });
 
-app.get('/api/health', (req, res) => {
+app.get('/api/health', async (req, res) => {
+  // A real row-returning select, never head+count: a head request against a
+  // missing table can come back without surfacing the error, which is exactly
+  // how "is the audit table installed?" got answered wrongly once already.
+  let auditTable = 'unknown';
+  if (isConfigured) {
+    try {
+      const { supabase } = require('./lib/supabase');
+      const { error } = await supabase.from('admin_audit_log').select('id').limit(1);
+      auditTable = error ? 'missing' : 'installed';
+    } catch {
+      auditTable = 'unknown';
+    }
+  }
   res.json({
     ok: true,
     service: 'roverzoom-ops-api',
     databaseConfigured: isConfigured,
+    auditTable,
   });
 });
 

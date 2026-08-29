@@ -65,6 +65,8 @@ async function withTrust(drivers) {
         humanApproved: standing.factors.humanApproved,
         review: standing.factors.review,
         screening: standing.factors.screening,
+        provisional: standing.factors.provisional,
+        provisionallyAuthorized: standing.factors.provisionallyAuthorized,
       },
     };
   });
@@ -105,6 +107,8 @@ async function getDriverWithTrust(driverId) {
       humanApproved: standing.factors.humanApproved,
       review: standing.factors.review,
       screening: standing.factors.screening,
+      provisional: standing.factors.provisional,
+      provisionallyAuthorized: standing.factors.provisionallyAuthorized,
     },
     _authUser: authUser,
   };

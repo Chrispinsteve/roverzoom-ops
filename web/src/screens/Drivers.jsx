@@ -14,6 +14,7 @@ const STANDINGS = [
   { value: 'awaiting_review',    label: 'Awaiting review',   level: 'warn' },
   { value: 'awaiting_documents', label: 'Awaiting documents',level: 'warn' },
   { value: 'screening_pending',  label: 'Screening running', level: 'warn' },
+  { value: 'provisional',        label: 'Provisional',       level: 'warn' },
   { value: 'cleared',            label: 'Cleared',           level: 'active' },
   { value: 'suspended',          label: 'Suspended' },
   { value: 'rejected',           label: 'Rejected' },

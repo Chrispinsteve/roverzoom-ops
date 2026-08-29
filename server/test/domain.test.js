@@ -284,3 +284,61 @@ test('only vetting roles may view identity documents', () => {
   assert.equal(roles.can('dispatcher', 'drivers.read'), true);
   assert.equal(roles.can('dispatcher', 'drivers.documents'), false);
 });
+
+
+// --- provisional authorization ---------------------------------------------
+// The whole safety property is the EXPIRY. These tests exist so nobody can
+// later "simplify" the grant into an unbounded flag without a test failing.
+
+const DRIVER = { status: 'active', profile_completed_at: '2026-08-28T00:00:00Z' };
+const NOW = Date.parse('2026-08-29T12:00:00Z');
+const withGrant = (p) => ({ app_metadata: { rz_review: { state: 'approved' }, ...(p ? { rz_provisional: p } : {}) } });
+
+test('without a grant, an unscreened driver is critical', () => {
+  const s = trust.trustStanding(DRIVER, withGrant(null), NOW);
+  assert.equal(s.key, 'unvetted_driving');
+  assert.equal(s.risk, 'critical');
+});
+
+test('a live grant downgrades critical to warn, never to healthy', () => {
+  const s = trust.trustStanding(DRIVER, withGrant({ until: '2026-09-23T12:00:00Z', by: 'ops@rz.com' }), NOW);
+  assert.equal(s.key, 'provisional');
+  // Explicitly NOT 'active'. An accepted risk is still a risk, and the console
+  // must keep saying so for the whole window.
+  assert.equal(s.risk, 'warn');
+  assert.notEqual(s.key, 'cleared');
+});
+
+test('an expired grant returns the driver to critical automatically', () => {
+  const s = trust.trustStanding(DRIVER, withGrant({ until: '2026-08-28T12:00:00Z', by: 'ops@rz.com' }), NOW);
+  assert.equal(s.key, 'unvetted_driving');
+  assert.equal(s.risk, 'critical');
+});
+
+test('a grant never satisfies the screening factor', () => {
+  const f = trust.trustFactors(DRIVER, withGrant({ until: '2026-09-23T12:00:00Z' }), NOW);
+  assert.equal(f.provisionallyAuthorized, true);
+  assert.equal(f.screeningClear, false, 'a grant must never be mistaken for a clear check');
+  assert.equal(trust.isFullyVetted(f), false);
+});
+
+test('a malformed or open-ended grant is ignored', () => {
+  for (const bad of [{}, { until: null }, { until: 'not-a-date' }]) {
+    const p = trust.readProvisional(withGrant(bad), NOW);
+    assert.equal(p.active, false, `${JSON.stringify(bad)} must not authorize anyone`);
+  }
+});
+
+test('days remaining counts down and floors at expiry', () => {
+  const live = trust.readProvisional(withGrant({ until: '2026-09-01T12:00:00Z' }), NOW);
+  assert.equal(live.daysLeft, 3);
+  const gone = trust.readProvisional(withGrant({ until: '2026-08-01T12:00:00Z' }), NOW);
+  assert.equal(gone.daysLeft, 0);
+  assert.equal(gone.expired, true);
+});
+
+test('a cleared driver is unaffected by a grant', () => {
+  const cleared = { app_metadata: { rz_review: { state: 'approved' }, screening_status: 'clear',
+    rz_provisional: { until: '2026-09-23T12:00:00Z' } } };
+  assert.equal(trust.trustStanding(DRIVER, cleared, NOW).key, 'cleared');
+});

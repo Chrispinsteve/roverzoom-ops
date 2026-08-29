@@ -71,9 +71,11 @@ test('health is public and reveals no secrets', async () => {
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.ok, true);
-  // It may say WHETHER the database is configured, never anything about how.
-  assert.deepEqual(Object.keys(body).sort(), ['databaseConfigured', 'ok', 'service']);
+  // It may say WHETHER things are configured, never anything about how.
+  assert.deepEqual(Object.keys(body).sort(), ['auditTable', 'databaseConfigured', 'ok', 'service']);
+  assert.ok(['installed', 'missing', 'unknown'].includes(body.auditTable));
   assert.ok(!JSON.stringify(body).includes('test-key'));
+  assert.ok(!JSON.stringify(body).includes('supabase.co'));
 });
 
 test('unknown routes 404 without hinting at the API shape', async () => {

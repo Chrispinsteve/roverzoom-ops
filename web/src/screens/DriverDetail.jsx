@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { api } from '../lib/api';
 import { useApi } from '../lib/useApi';
 import { Sheet, Detail, Pill, Loading, ErrorNote, Restricted } from '../components/ui';
-import { money, dayAndClock, relative } from '../lib/format';
+import { money, dayAndClock, relative, day } from '../lib/format';
 
 // The dossier a vetting decision is actually made from. Everything a reviewer
 // needs is on one surface: who they are, what they uploaded, what the
@@ -32,6 +32,11 @@ export function DriverDetail({ driverId, onClose, onChanged }) {
               d.status === 'suspended'
                 ? <button className="btn" onClick={() => setDialog('reinstate')}>Reinstate</button>
                 : <button className="btn btn-danger" onClick={() => setDialog('suspend')}>Suspend</button>
+            )}
+            {data.actions.canGrantProvisional && !d.trust.screeningClear && d.status !== 'suspended' && (
+              <button className="btn" onClick={() => setDialog('provisional')}>
+                {d.trust.provisionallyAuthorized ? 'Change authorization' : 'Authorize to drive'}
+              </button>
             )}
             {data.actions.canReview && (
               <button className="btn btn-primary" onClick={() => setDialog('review')}>
@@ -63,6 +68,28 @@ export function DriverDetail({ driverId, onClose, onChanged }) {
                     ? `${d.trust.review.state} by ${d.trust.review.by} · ${relative(d.trust.review.at)}`
                     : 'nobody has reviewed this driver'} />
               </div>
+
+              {d.trust.provisional?.granted && (
+                <div className={`sev-${d.trust.provisional.active ? 'warn' : 'critical'}`} style={{
+                  marginTop: 11, padding: '10px 12px', borderRadius: 'var(--r-xs)',
+                  background: 'var(--sev-wash)', border: '1px solid var(--sev-line)',
+                  fontSize: 12.5, lineHeight: 1.5,
+                }}>
+                  <div style={{ fontWeight: 600, color: 'var(--sev)', marginBottom: 3 }}>
+                    {d.trust.provisional.active
+                      ? `Authorized to drive pending screening — ${d.trust.provisional.daysLeft} day${d.trust.provisional.daysLeft === 1 ? '' : 's'} left`
+                      : 'Provisional authorization EXPIRED'}
+                  </div>
+                  <div className="muted">
+                    {d.trust.provisional.active
+                      ? <>Granted by {d.trust.provisional.by}, expires {day(d.trust.provisional.until)}.</>
+                      : <>Lapsed {day(d.trust.provisional.until)}. They are driving with no valid authorization and no completed check.</>}
+                  </div>
+                  {d.trust.provisional.reason && (
+                    <div className="faint" style={{ marginTop: 4 }}>&ldquo;{d.trust.provisional.reason}&rdquo;</div>
+                  )}
+                </div>
+              )}
 
               {d.trust.review.note && (
                 <div style={{
@@ -139,7 +166,15 @@ export function DriverDetail({ driverId, onClose, onChanged }) {
         )}
       </Sheet>
 
-      {dialog && d && (
+      {dialog === 'provisional' && d && (
+        <ProvisionalDialog
+          driver={d}
+          limits={data.provisionalLimits}
+          onClose={() => setDialog(null)}
+          onDone={() => { setDialog(null); reload(); onChanged?.(); }}
+        />
+      )}
+      {dialog && dialog !== 'provisional' && d && (
         <DecisionDialog
           kind={dialog}
           driver={d}
@@ -391,6 +426,105 @@ function DecisionDialog({ kind, driver, onClose, onDone }) {
           : 'Licence and insurance both verified against the DMV record.'}
         autoFocus
       />
+      <div className="faint" style={{ fontSize: 11.5, marginTop: 7 }}>
+        Recorded in the audit trail with your name.
+      </div>
+    </Sheet>
+  );
+}
+
+// Granting time to drive before a check completes. The dialog's job is to
+// make the trade explicit — what is missing, for how long — rather than to
+// present it as an approval.
+function ProvisionalDialog({ driver, limits, onClose, onDone }) {
+  const [days, setDays] = useState(String(limits?.defaultDays ?? 30));
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [mode, setMode] = useState('grant');
+
+  const max = limits?.maxDays ?? 90;
+  const n = Number(days);
+  const validDays = Number.isFinite(n) && n >= 1 && n <= max;
+
+  async function submit() {
+    setBusy(true); setError(null);
+    try {
+      await api.setProvisional(driver.id, mode === 'revoke'
+        ? { revoke: true, reason }
+        : { days: n, reason });
+      onDone();
+    } catch (err) { setError(err); } finally { setBusy(false); }
+  }
+
+  const has = driver.trust.provisional?.granted;
+
+  return (
+    <Sheet
+      open onClose={onClose} width={470}
+      title={has ? `Change authorization for ${driver.name}` : `Authorize ${driver.name} to drive`}
+      subtitle="While the background check is outstanding"
+      footer={
+        <>
+          <button className="btn" onClick={onClose} disabled={busy}>Cancel</button>
+          <button
+            className={`btn ${mode === 'revoke' ? 'btn-danger' : 'btn-primary'}`}
+            disabled={busy || !reason.trim() || (mode === 'grant' && !validDays)}
+            onClick={submit}
+          >
+            {busy ? 'Saving…' : mode === 'revoke' ? 'Revoke' : has ? 'Update' : `Authorize for ${validDays ? n : '…'} days`}
+          </button>
+        </>
+      }
+    >
+      {error && <div style={{ marginBottom: 14 }}><ErrorNote error={error} /></div>}
+
+      <div className="sev-warn" style={{
+        padding: '11px 13px', marginBottom: 16, borderRadius: 'var(--r-sm)',
+        background: 'var(--sev-wash)', border: '1px solid var(--sev-line)',
+        fontSize: 12.5, lineHeight: 1.55,
+      }}>
+        <strong style={{ color: 'var(--sev)' }}>What this does and does not do.</strong>
+        <div className="muted" style={{ marginTop: 4 }}>
+          Screening for {driver.name} is{' '}
+          <strong>{(driver.trust.screening.status || 'not started').replace('_', ' ')}</strong>.
+          This records that you know that and accept it for a fixed period. It does not
+          mark them screened, and they will keep showing as a warning until the check
+          actually clears. When the window lapses they return to <em>Driving unvetted</em>{' '}
+          automatically.
+        </div>
+      </div>
+
+      {has && (
+        <div className="row" style={{ gap: 6, marginBottom: 16 }}>
+          <button className={`btn btn-sm ${mode === 'grant' ? 'btn-primary' : ''}`} onClick={() => setMode('grant')}>Extend</button>
+          <button className={`btn btn-sm ${mode === 'revoke' ? 'btn-danger' : ''}`} onClick={() => setMode('revoke')}>Revoke</button>
+        </div>
+      )}
+
+      {mode === 'grant' && (
+        <div style={{ marginBottom: 14 }}>
+          <label className="label" htmlFor="prov-days">Valid for (days, max {max})</label>
+          <input id="prov-days" className="field" type="number" min="1" max={max}
+            value={days} onChange={(e) => setDays(e.target.value)} style={{ maxWidth: 130 }} />
+          {validDays && (
+            <div className="faint" style={{ fontSize: 11.5, marginTop: 6 }}>
+              {/* A preview only — the SERVER stamps the authoritative expiry from
+                  its own clock when the grant is written. Recomputing this per
+                  render is intentional and any drift is cosmetic. */}
+              {/* eslint-disable-next-line react-hooks/purity */}
+              Expires {new Date(Date.now() + n * 86400000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}.
+            </div>
+          )}
+        </div>
+      )}
+
+      <label className="label">Reason (required)</label>
+      <textarea className="field" value={reason} onChange={(e) => setReason(e.target.value)}
+        placeholder={mode === 'revoke'
+          ? 'Screening came back; no longer needed.'
+          : 'Licence and insurance verified in person. Checkr not yet enabled; re-check before this lapses.'}
+        autoFocus />
       <div className="faint" style={{ fontSize: 11.5, marginTop: 7 }}>
         Recorded in the audit trail with your name.
       </div>
