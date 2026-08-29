@@ -69,7 +69,7 @@ export const api = {
   driverDocuments: (id) => request(`/drivers/${id}/documents`),
   reviewDriver: (id, body) => request(`/drivers/${id}/review`, { method: 'POST', body }),
   setDriverStatus: (id, body) => request(`/drivers/${id}/status`, { method: 'POST', body }),
-  liveMap: () => request('/drivers-map/live'),
+  liveMap: () => request('/map/live'),
 
   financeSummary: (params = {}) => request(`/finance/summary?${new URLSearchParams(clean(params))}`),
   balances: () => request('/finance/balances'),

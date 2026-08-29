@@ -10,6 +10,7 @@ import { useAuth } from '../lib/auth';
 export const NAV = [
   { id: 'overview', label: 'Overview', permission: 'overview.read', glyph: '◈' },
   { id: 'dispatch', label: 'Dispatch', permission: 'dispatch.read', glyph: '◎' },
+  { id: 'map',      label: 'Live map', permission: 'drivers.read',  glyph: '◇' },
   { id: 'rides',    label: 'Rides',    permission: 'rides.read',    glyph: '◍' },
   { id: 'drivers',  label: 'Drivers',  permission: 'drivers.read',  glyph: '◐' },
   { id: 'finance',  label: 'Finance',  permission: 'finance.read',  glyph: '▤' },

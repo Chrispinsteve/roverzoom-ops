@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, lazy, Suspense } from 'react';
 import { AuthProvider, useAuth } from './lib/auth';
 import { api } from './lib/api';
 import { useApi } from './lib/useApi';
@@ -12,6 +12,11 @@ import { RideDetail } from './screens/RideDetail';
 import { Drivers } from './screens/Drivers';
 import { DriverDetail } from './screens/DriverDetail';
 import { Finance } from './screens/Finance';
+
+// The Google Maps library is ~160 kB gzipped — more than the rest of the
+// console put together. Split out so it is fetched only when someone actually
+// opens the map, instead of on every sign-in.
+const MapScreen = lazy(() => import('./screens/MapScreen').then((m) => ({ default: m.MapScreen })));
 import { Audit } from './screens/Audit';
 
 export default function App() {
@@ -80,6 +85,11 @@ function Console() {
         <Overview key={reloadKey} onOpenRide={setOpenRide} onNavigate={navigate} />
       )}
       {route === 'dispatch' && <Dispatch key={reloadKey} onOpenRide={setOpenRide} />}
+      {route === 'map' && (
+        <Suspense fallback={<div style={{ padding: 24 }}><Loading rows={2} height={120} /></div>}>
+          <MapScreen key={reloadKey} onOpenDriver={setOpenDriver} onOpenRide={setOpenRide} />
+        </Suspense>
+      )}
       {/* The filter is part of the key: navigating here WITH a filter (from an
           Overview metric, say) remounts the screen so its initial state is
           already right, rather than being corrected in an effect afterwards. */}

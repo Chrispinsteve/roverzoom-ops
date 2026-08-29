@@ -6,6 +6,7 @@
 // SUPABASE_SERVICE_ROLE_KEY must never reach the browser. The console's
 // frontend never talks to Supabase for data — it holds only an admin Auth
 // session and calls this API, which is the sole holder of the key.
+require('./env'); // must precede any process.env read below
 const { createClient } = require('@supabase/supabase-js');
 
 if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {

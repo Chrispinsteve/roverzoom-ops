@@ -63,11 +63,60 @@ npm run dev                        # API on :4100, console on :5300
 Then grant yourself access. The first owner can't be granted by an existing
 admin, because there isn't one:
 
-1. Create a Supabase Auth user for yourself (Supabase dashboard → Authentication).
-2. Set `ADMIN_BOOTSTRAP_EMAIL` in `server/.env` to that email.
+1. Create a Supabase Auth user for yourself (Dashboard → Authentication → Users).
+2. Set `ADMIN_BOOTSTRAP_EMAIL` in `.env` to that email.
 3. Sign in at http://localhost:5300 — you are an owner.
-4. **Then assign yourself a real role and clear the variable.** It's a ladder,
-   not a permanent door; the console shows a standing warning until you do.
+4. Give yourself a real role, then clear the variable:
+
+   ```bash
+   npm run grant -- you@roverzoom.com owner
+   ```
+
+   It's a ladder, not a permanent door; the console shows a standing warning
+   until you do.
+
+### Managing roles
+
+Roles live in each account's Supabase Auth `app_metadata` under
+`rz_admin_role`. That is **server-controlled** — the client SDK lets a user
+edit their own `user_metadata` but never `app_metadata` — which is what makes
+it safe to keep a permission there. It is also why the Supabase dashboard's
+user editor doesn't expose it, so use the script:
+
+```bash
+npm run grant -- --list                            # who has a role
+npm run grant -- ops@roverzoom.com dispatcher      # grant or change
+npm run grant -- --create ops@roverzoom.com trust  # create the account AND grant
+npm run grant -- ops@roverzoom.com --revoke        # remove access
+```
+
+**Use `--create` rather than the Supabase dashboard to add a new admin.** The
+rider/driver schema puts an `AFTER INSERT` trigger on `auth.users`
+(`on_auth_user_created` → `handle_new_driver`) that writes a `drivers` row for
+*every* new account. Since `drivers.name` and `drivers.phone` are `NOT NULL`,
+creating an admin from the dashboard either fails outright — the trigger's
+exception rolls back the `auth.users` insert too, surfacing as an opaque
+"Database error creating new user" — or, if you supply a name and phone,
+quietly makes your new admin an **active driver** who counts as supply and can
+be offered a ride. `--create` satisfies the trigger with placeholder metadata
+and then deletes the driver row it produced.
+
+It reads-modifies-writes, so it never clobbers the Checkr screening state or
+driver review decision that also live in `app_metadata`. Changes take effect on
+the person's next sign-in.
+
+If you'd rather do it in the Supabase SQL editor, `app_metadata` is backed by
+`auth.users.raw_app_meta_data`:
+
+```sql
+update auth.users
+set raw_app_meta_data =
+  coalesce(raw_app_meta_data, '{}'::jsonb) || '{"rz_admin_role":"owner"}'::jsonb
+where email = 'you@roverzoom.com';
+```
+
+The `||` merge matters — assigning the object wholesale would wipe the other
+keys stored alongside it.
 
 Optional but recommended — a durable audit trail:
 
@@ -124,6 +173,13 @@ warnings. Hard blockers (suspended, documents incomplete) can't be overridden.
 Soft warnings (never reviewed, offline, stale location) can be — but only
 deliberately, by acknowledging them, so an unvetted driver is never assigned by
 reflex during a rush.
+
+**Live map** — drivers and open rides on one map, because the useful question
+is always "is there anyone near *that* pickup?". Drivers are circles, rides are
+diamonds — shape as well as colour, so the two are never confusable and the map
+still reads for someone who can't separate red from green. A driver whose last
+position is stale is dimmed and hidden by default rather than drawn as if they
+were there now.
 
 **Rides** — the searchable ledger, and a detail view with the real lifecycle
 timeline, the dispatch offer history (the only way to answer "why did nobody
@@ -219,6 +275,7 @@ npm run dev:web      # console only, :5300
 npm test             # domain + auth test suite
 npm run build        # production console bundle
 npm run verify:sync -- /path/to/roverzoom
+npm run grant -- --list          # console roles
 ```
 
 ---
@@ -241,6 +298,7 @@ Set these in the Vercel project's environment variables:
 | `ADMIN_BOOTSTRAP_EMAIL` | Set once to grant yourself owner, then clear it |
 | `VITE_SUPABASE_URL` | Public; baked into the bundle at build time |
 | `VITE_SUPABASE_ANON_KEY` | Public by design, constrained by RLS |
+| `VITE_GOOGLE_MAPS_API_KEY` | The **browser** key — reuse the rider app's, and add this console's domain to its HTTP referrer restrictions |
 | `DRIVER_CUT_PCT`, `FARE_MULTIPLIER*`, `SERVICE_TZ` | Must match the rider/driver deployment |
 
 If you instead split the API onto its own host, set `CORS_ORIGINS` to the
@@ -253,15 +311,22 @@ all origins — fine locally, never in production; the server warns at boot.
 
 Honest list of what this does **not** do yet:
 
-- **No live map.** Driver positions are served by `GET /drivers-map/live` and
-  rendered as data, not on a map. Google Maps is already in the rider/driver
-  stack; wiring `@react-google-maps/api` to that endpoint is the next step.
+- **The map is only as good as the location data.** Drivers appear once the
+  driver app posts to `/api/driver/location`, which it does only while a driver
+  is signed in with location permission granted. A driver who has never done so
+  simply is not on the map — the screen says how many, rather than looking
+  broken.
 - **No realtime.** Screens poll (12–30s, paused when the tab is hidden). The
   driver app already uses Supabase Realtime; the console could subscribe to the
   same `bookings` changes instead.
-- **Admin role management is not yet a UI.** Roles are set via `app_metadata`
-  in the Supabase dashboard. The `admins.manage` permission exists and is
-  enforced; the screen behind it isn't built.
+- **Admin role management is a CLI, not a UI.** `npm run grant` handles it.
+  The `admins.manage` permission exists and is enforced; the screen behind it
+  isn't built yet.
+- **Admin accounts and driver accounts share one `auth.users` table**, and its
+  insert trigger assumes every new account is a driver. `npm run grant
+  --create` works around that per-account. The durable fix is to make
+  `handle_new_driver()` skip accounts flagged as staff — one DDL change,
+  worth doing before the admin team grows.
 - **Documents are shown, not verified.** The console renders the licence and
   insurance so a person can check them. There is no automated document OCR or
   authenticity check — the "approved by a person" gate means exactly that.

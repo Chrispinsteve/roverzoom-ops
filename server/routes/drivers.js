@@ -277,38 +277,4 @@ router.post('/drivers/:id/status', requireAdmin, requirePermission('drivers.susp
   }
 });
 
-// GET /api/admin/drivers/map/live — positions for the live map.
-router.get('/drivers-map/live', requireAdmin, requirePermission('drivers.read'), async (req, res) => {
-  try {
-    const { data, error } = await supabase
-      .from('drivers').select('*')
-      .not('current_lat', 'is', null)
-      .limit(2000);
-    if (error) throw error;
-
-    const decorated = await withTrust(data || []);
-    const busy = await supabase.from('bookings')
-      .select('driver_id, reference, status').in('status', ACTIVE_STATUSES).not('driver_id', 'is', null);
-    const trips = new Map((busy.data || []).map((b) => [b.driver_id, b]));
-
-    res.json({
-      generatedAt: new Date().toISOString(),
-      drivers: decorated.map((d) => {
-        const trip = trips.get(d.id);
-        return {
-          id: d.id, name: d.name,
-          lat: Number(d.current_lat), lng: Number(d.current_lng),
-          is_online: d.is_online,
-          standing: d.standing,
-          freshness: locationFreshness(d),
-          onTrip: trip ? { reference: trip.reference, status: trip.status, statusLabel: STATUS_LABEL[trip.status] } : null,
-        };
-      }),
-    });
-  } catch (err) {
-    console.error('[drivers:map]', err.message);
-    res.status(500).json({ error: 'Could not load driver positions.' });
-  }
-});
-
 module.exports = router;

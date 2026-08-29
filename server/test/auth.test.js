@@ -30,7 +30,7 @@ const ENDPOINTS = [
   ['GET', '/api/admin/drivers'],
   ['GET', '/api/admin/drivers/x'],
   ['GET', '/api/admin/drivers/x/documents'],
-  ['GET', '/api/admin/drivers-map/live'],
+  ['GET', '/api/admin/map/live'],
   ['GET', '/api/admin/finance/summary'],
   ['GET', '/api/admin/finance/balances'],
   ['GET', '/api/admin/finance/reconciliation'],
