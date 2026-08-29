@@ -33,6 +33,7 @@ const PERMISSIONS = {
   'drivers.review':  'Approve or reject a driver for the road',
   'drivers.suspend': 'Suspend or reinstate a driver account',
   'riders.pii':      'Reveal rider name, phone and email',
+  'analytics.read':  'See site traffic, regions and the booking funnel',
   'finance.read':    'See fares, earnings ledgers and payout balances',
   'finance.payout':  'Mark payouts as paid and settle balances',
   'audit.read':      'Read the admin audit trail',
@@ -87,6 +88,7 @@ const ROLES = {
     description: 'Reconciles fares, earnings and payouts. No rider contact access.',
     permissions: [
       'overview.read', 'rides.read', 'drivers.read', 'finance.read', 'finance.payout',
+      'analytics.read',
     ],
   },
 
@@ -94,7 +96,7 @@ const ROLES = {
   viewer: {
     label: 'Viewer',
     description: 'Read-only view of operations. No rider contact details, no actions.',
-    permissions: ['overview.read', 'rides.read', 'drivers.read', 'dispatch.read'],
+    permissions: ['overview.read', 'rides.read', 'drivers.read', 'dispatch.read', 'analytics.read'],
   },
 };
 

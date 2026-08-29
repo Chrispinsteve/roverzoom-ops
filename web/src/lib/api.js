@@ -78,6 +78,9 @@ export const api = {
   payouts: () => request('/finance/payouts'),
   markPayoutPaid: (id, body) => request(`/finance/payouts/${id}/paid`, { method: 'POST', body }),
 
+  traffic: (params = {}) => request(`/analytics/traffic?${new URLSearchParams(clean(params))}`),
+  funnel: (params = {}) => request(`/analytics/funnel?${new URLSearchParams(clean(params))}`),
+
   audit: (params = {}) => request(`/audit?${new URLSearchParams(clean(params))}`),
 };
 

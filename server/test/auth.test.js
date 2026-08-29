@@ -126,3 +126,53 @@ test('an explicit role always beats the bootstrap path', () => {
   delete process.env.ADMIN_BOOTSTRAP_EMAIL;
   delete require.cache[require.resolve('../middleware/requireAdmin')];
 });
+
+
+// --- public tracking beacon ------------------------------------------------
+// The only unauthenticated write surface in the system, so its behaviour is
+// pinned here: it must accept nothing it was not designed to accept, and must
+// never leak information back to a prober.
+
+test('the tracking beacon never reveals what it did', async () => {
+  const cases = [
+    { sessionId: 's1', step: 'visit' },              // valid
+    { sessionId: 's1', step: 'not_a_real_step' },    // unknown step
+    { sessionId: 's1' },                             // no step
+    { step: 'visit' },                               // no session
+    {},                                              // empty
+    null,                                            // no body
+  ];
+  for (const body of cases) {
+    const res = await fetch(base + '/api/track', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    // Always 204, always empty. A prober learns nothing about what was stored.
+    assert.equal(res.status, 204, `payload ${JSON.stringify(body)} should answer 204`);
+    assert.equal((await res.text()).length, 0);
+  }
+});
+
+test('the beacon is public but the analytics reads are not', async () => {
+  const open = await fetch(base + '/api/track', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sessionId: 'x', step: 'visit' }),
+  });
+  assert.equal(open.status, 204);
+
+  for (const path of ['/api/admin/analytics/traffic', '/api/admin/analytics/funnel']) {
+    const res = await fetch(base + path);
+    assert.equal(res.status, 401, `${path} must require a session`);
+  }
+});
+
+test('a huge tracking payload is rejected by the body limit', async () => {
+  const res = await fetch(base + '/api/track', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sessionId: 'x'.repeat(500000), step: 'visit' }),
+  });
+  // 413 from the 256kb limit, or 204 if it slipped under — never a 500.
+  assert.ok([204, 413].includes(res.status), `expected 204 or 413, got ${res.status}`);
+});

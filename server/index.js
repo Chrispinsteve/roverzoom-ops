@@ -9,6 +9,7 @@ const ridesRoutes = require('./routes/rides');
 const dispatchRoutes = require('./routes/dispatch');
 const driversRoutes = require('./routes/drivers');
 const mapRoutes = require('./routes/map');
+const analyticsRoutes = require('./routes/analytics');
 const financeRoutes = require('./routes/finance');
 const auditRoutes = require('./routes/audit');
 
@@ -38,6 +39,32 @@ app.use(cors({
 }));
 
 app.use(express.json({ limit: '256kb' }));
+
+// Body-parser failures must not become 500s.
+//
+// express.json() throws on a malformed body, on a non-object JSON body (it is
+// strict by default, so a bare `null` or `"x"` is rejected), and on anything
+// over the size limit. Without this, all three fell through to the generic
+// error handler and answered "Internal server error" — wrong, and noisy for a
+// PUBLIC endpoint that anything on the internet can post garbage to.
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  if (!err || !err.type) return next(err);
+
+  const tooLarge = err.type === 'entity.too.large';
+  const badJson = err.type === 'entity.parse.failed' || err.type === 'entity.verify.failed';
+  if (!tooLarge && !badJson) return next(err);
+
+  // The tracking beacon answers 204 to everything, including its own
+  // rejections: analytics must never surface an error into the rider's
+  // booking flow, and a prober must learn nothing from the response.
+  if (req.path === '/api/track') return res.status(204).end();
+
+  return res.status(tooLarge ? 413 : 400).json({
+    error: tooLarge ? 'Request body is too large.' : 'Request body is not valid JSON.',
+    code: tooLarge ? 'payload_too_large' : 'bad_json',
+  });
+});
 
 // Never let an admin response be cached by a proxy or the browser. These
 // payloads contain rider PII and driver trust decisions.
@@ -74,6 +101,11 @@ app.use('/api/admin', overviewRoutes);
 app.use('/api/admin', ridesRoutes);
 app.use('/api/admin', dispatchRoutes);
 app.use('/api/admin', driversRoutes);
+// The tracking beacon is public by necessity — the rider site has no admin
+// session. Mounted at /api (NOT /api/admin) so it can never be mistaken for an
+// authenticated surface.
+app.use('/api', analyticsRoutes);
+app.use('/api/admin', analyticsRoutes);
 app.use('/api/admin', mapRoutes);
 app.use('/api/admin', financeRoutes);
 app.use('/api/admin', auditRoutes);

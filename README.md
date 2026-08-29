@@ -118,11 +118,17 @@ where email = 'you@roverzoom.com';
 The `||` merge matters — assigning the object wholesale would wipe the other
 keys stored alongside it.
 
-Optional but recommended — a durable audit trail:
+Then the two migrations, against the same Supabase project:
 
 ```bash
-psql "$DATABASE_URL" -f db/001_admin_audit_log.sql
+psql "$DATABASE_URL" -f db/001_admin_audit_log.sql   # durable audit trail
+psql "$DATABASE_URL" -f db/002_site_events.sql       # traffic + funnel
 ```
+
+Both are additive and safe on a live database. Without the first, actions are
+recorded only to the server log; without the second, the Growth screen has
+nothing to show. Each screen says so plainly rather than rendering zeros —
+and `/api/health` reports `auditTable: installed | missing`.
 
 Without it the console still records every action, but only to the server log,
 where it can't be searched later. The Audit screen says so plainly rather than
@@ -191,6 +197,13 @@ uploaded, screening clear, approved by a person. The dossier renders the
 driver's actual photo, licence and insurance certificate so identity can be
 validated on the spot — see below for how those are retrieved.
 
+**Growth** — visits, the cities they come from, ad-driven versus organic, and
+the booking funnel. The funnel answers "why do people visit and not book?" by
+showing where they stop, and compares the fare abandoners saw against the fare
+bookers saw, so price and flow can be told apart. It refuses to draw
+conclusions below 30 sessions rather than dressing up a handful of visits as
+insight.
+
 **Finance** — revenue, driver balances, payouts, and **reconciliation** that
 catches the two silent failure modes in the live payout path: a completed ride
 with no earnings row (a `complete_booking()` integrity failure), and card
@@ -231,6 +244,30 @@ silently broken image, because that is itself a reason not to approve someone.
 
 ---
 
+## Site analytics
+
+The rider site loads a Google **Ads** tag (`AW-18393777489`), which is a
+conversion pixel — not analytics. There is no GA4 property, so no pageview,
+session or region data exists anywhere. `db/002_site_events.sql` plus the
+snippet in `integration/` creates it, first-party.
+
+It also answers "are the ads working?" **without** depending on Google: the
+rider app already stores an ad click (`gclid`) in `localStorage`, so each event
+records whether the visit came from an ad. Ad-driven visits and the bookings
+that follow are countable here directly.
+
+`POST /api/track` is the only unauthenticated write surface in the system, and
+is built accordingly: it accepts a fixed vocabulary only (a known step, channel,
+device class, a random visit id and one bounded number), always answers `204`
+so a prober learns nothing and the booking flow never sees an error, and is
+rate-limited per instance. **No personal data is collected** — no name, phone,
+email, address, IP or cross-visit identifier. Region comes from the edge at city
+granularity.
+
+See `integration/README.md` for the seven one-line calls to add to the rider app.
+
+---
+
 ## Architecture
 
 ```
@@ -243,7 +280,8 @@ server/                Express API — the ONLY holder of the service-role key
 web/                   React + Vite console
   src/design/          tokens.css · base.css  ← the whole design system
   src/screens/         one file per surface
-db/                    001_admin_audit_log.sql (optional)
+db/                    001_admin_audit_log.sql · 002_site_events.sql
+integration/           the rider-app tracking snippet + how to wire it
 archive/               the original static prototype, kept for reference
 ```
 

@@ -13,6 +13,7 @@ export const NAV = [
   { id: 'map',      label: 'Live map', permission: 'drivers.read',  glyph: '◇' },
   { id: 'rides',    label: 'Rides',    permission: 'rides.read',    glyph: '◍' },
   { id: 'drivers',  label: 'Drivers',  permission: 'drivers.read',  glyph: '◐' },
+  { id: 'growth',   label: 'Growth',   permission: 'analytics.read', glyph: '◭' },
   { id: 'finance',  label: 'Finance',  permission: 'finance.read',  glyph: '▤' },
   { id: 'audit',    label: 'Audit',    permission: 'audit.read',    glyph: '▦' },
 ];

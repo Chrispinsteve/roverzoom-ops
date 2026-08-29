@@ -11,6 +11,7 @@ import { Rides } from './screens/Rides';
 import { RideDetail } from './screens/RideDetail';
 import { Drivers } from './screens/Drivers';
 import { DriverDetail } from './screens/DriverDetail';
+import { Growth } from './screens/Growth';
 import { Finance } from './screens/Finance';
 
 // The Google Maps library is ~160 kB gzipped — more than the rest of the
@@ -99,6 +100,7 @@ function Console() {
       {route === 'drivers' && (
         <Drivers key={`${reloadKey}:${filters.standing || ''}`} initialFilters={filters} onOpenDriver={setOpenDriver} />
       )}
+      {route === 'growth' && <Growth key={reloadKey} />}
       {route === 'finance' && <Finance key={reloadKey} />}
       {route === 'audit' && <Audit key={reloadKey} />}
 

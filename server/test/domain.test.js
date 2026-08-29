@@ -13,6 +13,7 @@ const attention = require('../domain/attention');
 const roles = require('../lib/roles');
 const { riderContact, maskPhone } = require('../lib/redact');
 const docs = require('../lib/documents');
+const funnel = require('../domain/funnel');
 
 // --- money -----------------------------------------------------------------
 
@@ -341,4 +342,71 @@ test('a cleared driver is unaffected by a grant', () => {
   const cleared = { app_metadata: { rz_review: { state: 'approved' }, screening_status: 'clear',
     rz_provisional: { until: '2026-09-23T12:00:00Z' } } };
   assert.equal(trust.trustStanding(DRIVER, cleared, NOW).key, 'cleared');
+});
+
+
+// --- funnel ----------------------------------------------------------------
+
+test('the funnel counts sessions, not events', () => {
+  // One session firing the same step repeatedly must count once.
+  const events = [
+    { session_id: 'a', step: 'visit' }, { session_id: 'a', step: 'visit' },
+    { session_id: 'a', step: 'visit' }, { session_id: 'b', step: 'visit' },
+  ];
+  const r = funnel.buildFunnel(events);
+  assert.equal(r.totalSessions, 2);
+  assert.equal(r.steps[0].sessions, 2);
+});
+
+test('the funnel is monotonic — a dropped beacon cannot fake a recovery', () => {
+  // This session never reported pickup_set or dropoff_set, but did reach the
+  // price. It must still be counted at every earlier step, or the chart would
+  // show more people at a later step than the one before it.
+  const r = funnel.buildFunnel([
+    { session_id: 'a', step: 'visit' },
+    { session_id: 'a', step: 'quote_viewed' },
+  ]);
+  const counts = r.steps.map((s) => s.sessions);
+  for (let i = 1; i < counts.length; i++) {
+    assert.ok(counts[i] <= counts[i - 1], `step ${i} (${counts[i]}) must not exceed step ${i - 1} (${counts[i - 1]})`);
+  }
+  assert.equal(r.steps.find((s) => s.key === 'pickup_set').sessions, 1);
+});
+
+test('the worst drop-off ignores steps with too small a base', () => {
+  // Two sessions, one of which vanishes, is a 50% drop off a base of 2. That
+  // must not be reported as an insight.
+  const r = funnel.buildFunnel([
+    { session_id: 'a', step: 'visit' },
+    { session_id: 'b', step: 'visit' },
+    { session_id: 'a', step: 'booking_started' },
+  ]);
+  assert.equal(r.worstDropOff, null);
+  assert.equal(r.enoughData, false);
+});
+
+test('the funnel flags when there is too little data to trust', () => {
+  const few = funnel.buildFunnel(Array.from({ length: 10 }, (_, i) => ({ session_id: 's' + i, step: 'visit' })));
+  assert.equal(few.enoughData, false);
+  const many = funnel.buildFunnel(Array.from({ length: 40 }, (_, i) => ({ session_id: 's' + i, step: 'visit' })));
+  assert.equal(many.enoughData, true);
+});
+
+test('unknown steps are ignored rather than corrupting the funnel', () => {
+  const r = funnel.buildFunnel([
+    { session_id: 'a', step: 'visit' },
+    { session_id: 'a', step: 'hacked_step' },
+    { session_id: 'b', step: 'not_a_step' },
+  ]);
+  assert.equal(r.totalSessions, 1, 'a session with only unknown steps must not count');
+});
+
+test('conversion is computed from the final step', () => {
+  const r = funnel.buildFunnel([
+    { session_id: 'a', step: 'visit' }, { session_id: 'a', step: 'booked' },
+    { session_id: 'b', step: 'visit' }, { session_id: 'c', step: 'visit' },
+    { session_id: 'd', step: 'visit' },
+  ]);
+  assert.equal(r.booked, 1);
+  assert.equal(r.conversionPct, 25);
 });
