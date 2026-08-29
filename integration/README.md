@@ -51,6 +51,17 @@ and add the rider site to the ops API's allowlist:
 CORS_ORIGINS=https://admin.roverzoom.com,https://www.roverzoom.com
 ```
 
+**Both domains, not just the console.** The beacon is a cross-origin request
+from `www.roverzoom.com`; leaving the rider domain out of the allowlist blocks
+every event while the console itself keeps working, which looks exactly like
+"nobody visited".
+
+Note also that the beacon is sent as `text/plain`, not `application/json`.
+That is deliberate: `application/json` is not a CORS-safelisted content type,
+so it forces a preflight, and a preflighted `sendBeacon` is dropped by the
+browser. The body is still JSON — the ops API parses it out of the string.
+It works either way same-origin, so this only ever breaks in production.
+
 ### What the patch changes, and why only one file
 
 Every booking field in the kiosk flow already funnels through a single `patch()`

@@ -65,7 +65,7 @@ export function Growth() {
           <Panel>
             <Empty
               title="Nothing has been received yet"
-              note="The table is installed and this screen is working — but the rider site has not sent a single event, so there is nothing to count. Add the seven track() calls to the rider app and deploy it (integration/README.md). Data starts from the moment it ships and cannot be backfilled."
+              note="The table is installed and this screen is working — the rider site simply has not sent anything yet. Check that the rider app is deployed with integration/rider-app.patch applied, that VITE_OPS_API_URL points at this console, and that CORS_ORIGINS here includes the rider site's domain. Data starts from the moment it ships and cannot be backfilled."
             />
           </Panel>
         ) : traffic.loading && !t ? (

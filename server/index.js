@@ -38,6 +38,12 @@ app.use(cors({
   credentials: false, // auth travels in the Authorization header, not cookies
 }));
 
+// The tracking beacon arrives as text/plain (see integration/roverzoom-track.js
+// for why: it keeps the cross-origin beacon free of a CORS preflight, which a
+// beacon cannot satisfy). Parsed here, before express.json(), which would
+// ignore this content type entirely.
+app.use('/api/track', express.text({ type: ['text/plain', 'text/*'], limit: '64kb' }));
+
 app.use(express.json({ limit: '256kb' }));
 
 // Body-parser failures must not become 500s.

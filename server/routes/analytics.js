@@ -71,7 +71,15 @@ router.post('/track', async (req, res) => {
     const ip = req.headers['x-forwarded-for'] || (req.socket && req.socket.remoteAddress) || 'unknown';
     if (rateLimited(String(ip).split(',')[0].trim())) return done();
 
-    const { sessionId, step, channel, device, value, bookingRef, utm, clickIds, referrer, isKiosk } = req.body || {};
+    // The body is a JSON string when it arrived as text/plain (the beacon
+    // path), or an object when a client posted application/json.
+    let body = req.body;
+    if (typeof body === 'string') {
+      try { body = JSON.parse(body); } catch { return done(); }
+    }
+    if (!body || typeof body !== 'object') return done();
+
+    const { sessionId, step, channel, device, value, bookingRef, utm, clickIds, referrer, isKiosk } = body;
     if (!sessionId || !step || !isStep(step)) return done();
 
     // Attribution is normalized SERVER-side from the raw signals the browser

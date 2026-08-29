@@ -136,17 +136,28 @@ export function track(step, { value, bookingRef } = {}) {
       isKiosk: ATTRIBUTION.isKiosk,
     });
 
-    // sendBeacon survives the page being closed — essential for exactly the
-    // steps that matter most here, the ones right before someone leaves.
+    // Sent as text/plain, NOT application/json — and that is load-bearing.
+    //
+    // The console lives on a different origin to the rider site, so these are
+    // cross-origin requests. application/json is not a CORS-safelisted content
+    // type, so it forces a preflight; beacons are dispatched no-cors and a
+    // preflighted beacon is simply dropped. The result would be tracking that
+    // works perfectly in local development (same origin, via the dev proxy)
+    // and silently records nothing in production — the worst possible failure
+    // for an analytics pipeline, because it looks like "nobody visited".
+    //
+    // text/plain is safelisted, so no preflight happens. The body is still
+    // JSON; the ops API parses it from the string.
     if (navigator.sendBeacon) {
-      navigator.sendBeacon(ENDPOINT, new Blob([payload], { type: 'application/json' }));
+      navigator.sendBeacon(ENDPOINT, new Blob([payload], { type: 'text/plain;charset=UTF-8' }));
       return;
     }
     fetch(ENDPOINT, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'text/plain;charset=UTF-8' },
       body: payload,
       keepalive: true,
+      mode: 'cors',
     }).catch(() => {});
   } catch {
     /* analytics must never break the booking flow */

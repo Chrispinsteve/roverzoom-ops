@@ -176,3 +176,52 @@ test('a huge tracking payload is rejected by the body limit', async () => {
   // 413 from the 256kb limit, or 204 if it slipped under — never a 500.
   assert.ok([204, 413].includes(res.status), `expected 204 or 413, got ${res.status}`);
 });
+
+
+test('the beacon accepts a text/plain body, which is how it really arrives', async () => {
+  // The production transport. application/json would force a CORS preflight
+  // that a beacon cannot satisfy, so the browser sends text/plain and the
+  // server parses JSON out of the string. If this ever regresses, tracking
+  // silently records nothing in production while still working locally.
+  const res = await fetch(base + '/api/track', {
+    method: 'POST',
+    headers: { 'content-type': 'text/plain;charset=UTF-8' },
+    body: JSON.stringify({ sessionId: 'plain-1', step: 'visit' }),
+  });
+  assert.equal(res.status, 204);
+});
+
+test('a text/plain body that is not JSON is discarded quietly', async () => {
+  const res = await fetch(base + '/api/track', {
+    method: 'POST',
+    headers: { 'content-type': 'text/plain' },
+    body: 'this is not json at all',
+  });
+  assert.equal(res.status, 204);
+});
+
+test('the beacon still accepts application/json', async () => {
+  // The fetch fallback and any server-to-server caller.
+  const res = await fetch(base + '/api/track', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sessionId: 'json-1', step: 'visit' }),
+  });
+  assert.equal(res.status, 204);
+});
+
+test('a cross-origin beacon preflight is answered for the rider site', async () => {
+  // CORS_ORIGINS is set to https://admin.roverzoom.com in this suite, so a
+  // request from an origin NOT on the allowlist must be refused rather than
+  // quietly accepted.
+  const allowed = await fetch(base + '/api/track', {
+    method: 'OPTIONS',
+    headers: {
+      origin: 'https://admin.roverzoom.com',
+      'access-control-request-method': 'POST',
+      'access-control-request-headers': 'content-type',
+    },
+  });
+  assert.ok(allowed.status < 400, `preflight from an allowed origin should succeed, got ${allowed.status}`);
+  assert.equal(allowed.headers.get('access-control-allow-origin'), 'https://admin.roverzoom.com');
+});

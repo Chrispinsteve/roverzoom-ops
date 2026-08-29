@@ -90,10 +90,10 @@ index 1c48639..6179755 100644
      );
 diff --git a/frontend/src/lib/track.js b/frontend/src/lib/track.js
 new file mode 100644
-index 0000000..f3bc910
+index 0000000..5748f74
 --- /dev/null
 +++ b/frontend/src/lib/track.js
-@@ -0,0 +1,154 @@
+@@ -0,0 +1,165 @@
 +// RoverZoom — first-party funnel tracking and traffic attribution.
 +//
 +// DROP THIS INTO THE RIDER APP: copy to roverzoom/frontend/src/lib/track.js
@@ -232,17 +232,28 @@ index 0000000..f3bc910
 +      isKiosk: ATTRIBUTION.isKiosk,
 +    });
 +
-+    // sendBeacon survives the page being closed — essential for exactly the
-+    // steps that matter most here, the ones right before someone leaves.
++    // Sent as text/plain, NOT application/json — and that is load-bearing.
++    //
++    // The console lives on a different origin to the rider site, so these are
++    // cross-origin requests. application/json is not a CORS-safelisted content
++    // type, so it forces a preflight; beacons are dispatched no-cors and a
++    // preflighted beacon is simply dropped. The result would be tracking that
++    // works perfectly in local development (same origin, via the dev proxy)
++    // and silently records nothing in production — the worst possible failure
++    // for an analytics pipeline, because it looks like "nobody visited".
++    //
++    // text/plain is safelisted, so no preflight happens. The body is still
++    // JSON; the ops API parses it from the string.
 +    if (navigator.sendBeacon) {
-+      navigator.sendBeacon(ENDPOINT, new Blob([payload], { type: 'application/json' }));
++      navigator.sendBeacon(ENDPOINT, new Blob([payload], { type: 'text/plain;charset=UTF-8' }));
 +      return;
 +    }
 +    fetch(ENDPOINT, {
 +      method: 'POST',
-+      headers: { 'content-type': 'application/json' },
++      headers: { 'content-type': 'text/plain;charset=UTF-8' },
 +      body: payload,
 +      keepalive: true,
++      mode: 'cors',
 +    }).catch(() => {});
 +  } catch {
 +    /* analytics must never break the booking flow */
