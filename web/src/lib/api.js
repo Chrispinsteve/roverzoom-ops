@@ -58,6 +58,7 @@ export const api = {
   rides: (params = {}) => request(`/rides?${new URLSearchParams(clean(params))}`),
   ride: (id) => request(`/rides/${encodeURIComponent(id)}`),
   cancelRide: (id, body) => request(`/rides/${id}/cancel`, { method: 'POST', body }),
+  rescheduleRide: (id, body) => request(`/rides/${id}/reschedule`, { method: 'POST', body }),
 
   dispatchBoard: () => request('/dispatch/board'),
   candidates: (bookingId) => request(`/dispatch/${bookingId}/candidates`),

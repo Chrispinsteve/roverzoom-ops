@@ -10,7 +10,8 @@ const {
   RIDE_STATUSES, STATUS_LABEL, STATUS_SEVERITY, ACTIVE_STATUSES,
   UNASSIGNED_STATUSES, isCancelable, buildTimeline,
 } = require('../domain/lifecycle');
-const { rideEconomics } = require('../domain/money');
+const { rideEconomics, multiplierForTime } = require('../domain/money');
+const { conflictsFor, COMMITTED_STATUSES } = require('../domain/schedule');
 
 const router = express.Router();
 
@@ -187,11 +188,119 @@ router.get('/rides/:id', requireAdmin, requirePermission('rides.read'), async (r
           && !['completed', 'canceled'].includes(booking.status),
         assignable: !booking.driver_id && can(req.admin.role, 'dispatch.assign')
           && UNASSIGNED_STATUSES.includes(booking.status),
+        reschedulable: can(req.admin.role, 'rides.reassign')
+          && !['completed', 'canceled', 'in_progress', 'arrived'].includes(booking.status),
       },
     });
   } catch (err) {
     console.error('[rides:get]', err.message);
     res.status(500).json({ error: 'Could not load the ride.' });
+  }
+});
+
+// POST /api/admin/rides/:id/reschedule  { scheduledAt, reason }
+//
+// Moves a ride's pickup time. Needed because the alternative — cancel and
+// rebook — loses the reference the rider already has, the price they were
+// quoted, and the driver already attached to it.
+//
+// The fare is deliberately NOT recalculated. The rider was quoted a locked
+// price and told it was locked; silently repricing because the new time falls
+// in a different promo window would break that promise. If the new time
+// changes the tier, the response says so and the operator decides.
+router.post('/rides/:id/reschedule', requireAdmin, requirePermission('rides.reassign'), async (req, res) => {
+  const audit = auditor(req);
+  const { scheduledAt, reason } = req.body || {};
+
+  if (!reason || !String(reason).trim()) {
+    return res.status(422).json({ error: 'A reason is required.', code: 'reason_required' });
+  }
+  const when = new Date(scheduledAt);
+  if (!scheduledAt || isNaN(when.getTime())) {
+    return res.status(422).json({ error: 'A valid pickup time is required.', code: 'bad_time' });
+  }
+
+  try {
+    const { data: before, error: readErr } = await supabase
+      .from('bookings').select('*').eq('id', req.params.id).maybeSingle();
+    if (readErr) throw readErr;
+    if (!before) return res.status(404).json({ error: 'Ride not found.' });
+
+    if (['completed', 'canceled'].includes(before.status)) {
+      return res.status(409).json({
+        error: `A ride that is "${STATUS_LABEL[before.status]}" cannot be rescheduled.`,
+        code: 'terminal_status',
+      });
+    }
+    // A trip already underway has a rider in the car; its pickup time is
+    // history, not a plan.
+    if (['in_progress', 'arrived'].includes(before.status)) {
+      return res.status(409).json({
+        error: `This ride is already ${STATUS_LABEL[before.status].toLowerCase()}. Its pickup time cannot be changed.`,
+        code: 'already_started',
+      });
+    }
+
+    // Guarded on the time we read, so two operators moving the same ride
+    // cannot silently overwrite each other.
+    const { data: after, error } = await supabase
+      .from('bookings')
+      .update({ scheduled_at: when.toISOString() })
+      .eq('id', before.id)
+      .eq('scheduled_at', before.scheduled_at)
+      .select()
+      .maybeSingle();
+    if (error) throw error;
+    if (!after) {
+      return res.status(409).json({
+        error: 'The ride was changed while you were rescheduling it. Reload and try again.',
+        code: 'stale_state',
+      });
+    }
+
+    // Does the driver still fit around their other work?
+    let driverConflicts = [];
+    if (after.driver_id) {
+      const { data: others } = await supabase
+        .from('bookings')
+        .select('id, reference, scheduled_at, duration_minutes, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng')
+        .eq('driver_id', after.driver_id)
+        .in('status', COMMITTED_STATUSES);
+      driverConflicts = conflictsFor(after, others || []);
+    }
+
+    const wasMultiplier = multiplierForTime(before.scheduled_at);
+    const nowMultiplier = multiplierForTime(after.scheduled_at);
+
+    await audit({
+      action: 'ride.reschedule', subjectType: 'booking', subjectId: after.id,
+      summary: `Moved ${after.reference} to ${new Date(after.scheduled_at).toISOString()}`,
+      detail: {
+        from: before.scheduled_at, to: after.scheduled_at,
+        reason: String(reason).trim(),
+        driver_id: after.driver_id,
+        fareUnchanged: Number(after.fare),
+        promoTierChanged: wasMultiplier !== nowMultiplier,
+        driverConflicts,
+      },
+    });
+
+    res.json({
+      ride: { id: after.id, reference: after.reference, scheduled_at: after.scheduled_at, fare: after.fare },
+      // Surfaced rather than acted on: the operator decides whether a changed
+      // promo tier warrants telling the rider, and whether the driver's new
+      // clashes matter.
+      pricing: {
+        fareUnchanged: Number(after.fare),
+        promoTierChanged: wasMultiplier !== nowMultiplier,
+        wasDiscountPct: Math.round((1 - wasMultiplier) * 100),
+        nowDiscountPct: Math.round((1 - nowMultiplier) * 100),
+      },
+      driverConflicts,
+    });
+  } catch (err) {
+    console.error('[rides:reschedule]', err.message);
+    res.status(500).json({ error: 'Could not reschedule the ride.' });
   }
 });
 

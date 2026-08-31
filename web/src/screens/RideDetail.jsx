@@ -3,7 +3,7 @@ import { api } from '../lib/api';
 import { useApi } from '../lib/useApi';
 import { Sheet, Detail, Pill, Loading, ErrorNote, Restricted } from '../components/ui';
 import { AssignSheet } from '../components/AssignSheet';
-import { money, dayAndClock, clock, duration, miles, relative } from '../lib/format';
+import { money, dayAndClock, clock, duration, miles, relative, toLocalInput, fromLocalInput } from '../lib/format';
 
 // One ride, everything about it. The timeline is the centerpiece: almost every
 // support question ("where is my driver?", "why was I charged?") is answered by
@@ -36,6 +36,9 @@ export function RideDetail({ rideId, onClose, onChanged }) {
                   board, so a ride opened from Rides or from the Overview feed
                   could be read but not acted on. Both actions now live
                   wherever the ride does. */}
+              {data.actions.reschedulable && (
+                <button className="btn" onClick={() => setAction('reschedule')}>Change time</button>
+              )}
               {data.actions.assignable && (
                 <button className="btn btn-primary" onClick={() => setAction('assign')}>Assign a driver</button>
               )}
@@ -202,7 +205,14 @@ export function RideDetail({ rideId, onClose, onChanged }) {
           onAssigned={() => { setAction(null); reload(); onChanged?.(); }}
         />
       )}
-      {action && action !== 'assign' && ride && (
+      {action === 'reschedule' && ride && (
+        <RescheduleDialog
+          ride={ride}
+          onClose={() => setAction(null)}
+          onDone={() => { setAction(null); reload(); onChanged?.(); }}
+        />
+      )}
+      {action && !['assign', 'reschedule'].includes(action) && ride && (
         <ActionDialog
           kind={action}
           ride={ride}
@@ -211,6 +221,105 @@ export function RideDetail({ rideId, onClose, onChanged }) {
         />
       )}
     </>
+  );
+}
+
+// Moving a pickup time. Deliberately does NOT reprice: the rider was quoted a
+// locked fare and told it was locked, so a silent change because the new time
+// falls in a different promo window would break that promise. The server
+// reports a tier change and the operator decides what to do about it.
+function RescheduleDialog({ ride, onClose, onDone }) {
+  // datetime-local wants the SERVICE timezone's wall clock, not the browser's
+  // — a dispatcher working remotely must set Florida time, not their own.
+  const [when, setWhen] = useState(() => toLocalInput(ride.scheduled_at));
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [result, setResult] = useState(null);
+
+  async function submit() {
+    setBusy(true); setError(null);
+    try {
+      const res = await api.rescheduleRide(ride.id, { scheduledAt: fromLocalInput(when), reason });
+      // Hold the sheet open when there is something the operator must see —
+      // a changed promo tier, or a driver who no longer fits.
+      if (res.pricing?.promoTierChanged || (res.driverConflicts || []).length) setResult(res);
+      else onDone();
+    } catch (err) {
+      setError(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Sheet
+      open onClose={onClose} width={470}
+      title="Change the pickup time"
+      subtitle={ride.reference}
+      footer={result ? (
+        <button className="btn btn-primary" onClick={onDone}>Done</button>
+      ) : (
+        <>
+          <button className="btn" onClick={onClose} disabled={busy}>Cancel</button>
+          <button className="btn btn-primary" disabled={busy || !when || !reason.trim()} onClick={submit}>
+            {busy ? 'Moving…' : 'Move ride'}
+          </button>
+        </>
+      )}
+    >
+      {error && <div style={{ marginBottom: 14 }}><ErrorNote error={error} /></div>}
+
+      {result ? (
+        <div className="col" style={{ gap: 12 }}>
+          <div className="sev-active" style={{ fontSize: 13, color: 'var(--sev)' }}>
+            Moved to {dayAndClock(result.ride.scheduled_at)}.
+          </div>
+          {result.pricing.promoTierChanged && (
+            <div className="sev-warn" style={{
+              padding: '10px 12px', borderRadius: 'var(--r-xs)',
+              background: 'var(--sev-wash)', border: '1px solid var(--sev-line)', fontSize: 12.5, lineHeight: 1.5,
+            }}>
+              <strong style={{ color: 'var(--sev)' }}>The new time is in a different pricing window.</strong>
+              <div className="muted" style={{ marginTop: 2 }}>
+                It would now quote at {result.pricing.nowDiscountPct}% off instead of {result.pricing.wasDiscountPct}%.
+                The fare stays at {money(result.ride.fare)} because it was locked — tell the rider if that matters.
+              </div>
+            </div>
+          )}
+          {(result.driverConflicts || []).length > 0 && (
+            <div className="sev-critical" style={{
+              padding: '10px 12px', borderRadius: 'var(--r-xs)',
+              background: 'var(--sev-wash)', border: '1px solid var(--sev-line)', fontSize: 12.5, lineHeight: 1.5,
+            }}>
+              <strong style={{ color: 'var(--sev)' }}>The assigned driver no longer fits this ride.</strong>
+              <ul style={{ margin: '4px 0 0', paddingLeft: 18 }} className="muted">
+                {result.driverConflicts.map((c, i) => <li key={i}>{c.detail}</li>)}
+              </ul>
+            </div>
+          )}
+        </div>
+      ) : (
+        <>
+          <p className="muted" style={{ fontSize: 13, marginBottom: 16, lineHeight: 1.55 }}>
+            The fare stays as quoted — it was locked for the rider. If the new time falls in a
+            different pricing window you will be told, and you decide what to do about it.
+          </p>
+          <label className="label" htmlFor="resched">New pickup time (service timezone)</label>
+          <input id="resched" className="field" type="datetime-local"
+            value={when} onChange={(e) => setWhen(e.target.value)} autoFocus />
+          <div className="faint" style={{ fontSize: 11.5, margin: '6px 0 14px' }}>
+            Currently {dayAndClock(ride.scheduled_at)}.
+          </div>
+          <label className="label">Reason (required)</label>
+          <textarea className="field" value={reason} onChange={(e) => setReason(e.target.value)}
+            placeholder="Rider called — flight moved to the later slot." />
+          <div className="faint" style={{ fontSize: 11.5, marginTop: 7 }}>
+            Recorded in the audit trail with your name.
+          </div>
+        </>
+      )}
+    </Sheet>
   );
 }
 

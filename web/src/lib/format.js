@@ -78,3 +78,30 @@ export function shortAddress(address) {
   const [first] = address.split(',');
   return first.trim();
 }
+
+
+// datetime-local works in wall-clock strings with no zone. These convert
+// between an ISO instant and the SERVICE timezone's wall clock, so an operator
+// working from anywhere sets Florida time rather than their own — the same
+// reason clock() renders in TZ rather than the browser's zone.
+export function toLocalInput(iso) {
+  if (!iso) return '';
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(new Date(iso));
+  const g = (t) => (parts.find((p) => p.type === t) || {}).value;
+  return `${g('year')}-${g('month')}-${g('day')}T${g('hour') === '24' ? '00' : g('hour')}:${g('minute')}`;
+}
+
+export function fromLocalInput(local) {
+  if (!local) return null;
+  // Read the wall clock as if it were UTC, then shift by the zone's offset at
+  // that moment — which is what makes this correct across DST.
+  const asUtc = new Date(`${local}:00Z`);
+  const probe = new Date(asUtc.getTime());
+  const offset =
+    new Date(probe.toLocaleString('en-US', { timeZone: 'UTC' })).getTime() -
+    new Date(probe.toLocaleString('en-US', { timeZone: TZ })).getTime();
+  return new Date(asUtc.getTime() + offset).toISOString();
+}

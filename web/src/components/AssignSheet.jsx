@@ -70,7 +70,9 @@ export function AssignSheet({ ride, onClose, onAssigned }) {
           background: 'var(--sev-wash)', border: '1px solid var(--sev-line)',
         }}>
           <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--sev)', marginBottom: 6 }}>
-            {chosen.name} can take this ride, but check first
+            {chosen.conflicts && chosen.conflicts.length
+              ? `${chosen.name}'s schedule does not fit this ride`
+              : `${chosen.name} can take this ride, but check first`}
           </div>
           <ul style={{ margin: '0 0 12px', paddingLeft: 18, fontSize: 13, color: 'var(--ink-2)' }}>
             {warnings.map((w) => <li key={w} style={{ marginBottom: 2 }}>{w}</li>)}
@@ -78,7 +80,7 @@ export function AssignSheet({ ride, onClose, onAssigned }) {
           <div className="row" style={{ gap: 8 }}>
             <button className="btn btn-sm" onClick={() => { setWarnings(null); setChosen(null); }}>Pick someone else</button>
             <button className="btn btn-sm btn-danger" disabled={busy} onClick={() => assign(true)}>
-              Assign anyway
+              {chosen.conflicts && chosen.conflicts.length ? 'Assign anyway — my call' : 'Assign anyway'}
             </button>
           </div>
         </div>
@@ -99,7 +101,14 @@ export function AssignSheet({ ride, onClose, onAssigned }) {
       {data && (
         <>
           <div className="row-between" style={{ marginBottom: 10 }}>
-            <span className="eyebrow">{eligible.length} available</span>
+            <span className="eyebrow">
+              {eligible.length} available
+              {typeof data.clearCount === 'number' && data.clearCount < eligible.length && (
+                <span className="faint" style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 400 }}>
+                  {' '}· {data.clearCount} with a clear schedule
+                </span>
+              )}
+            </span>
             <span className="faint" style={{ fontSize: 11.5 }}>straight-line distance</span>
           </div>
 
@@ -165,15 +174,31 @@ function CandidateRow({ candidate: c, selected, onSelect, disabled }) {
           {c.rating != null ? ` · ${Number(c.rating).toFixed(2)}★` : ''}
         </span>
 
+        {/* Schedule clashes get their own line with the real numbers. "23 min
+            short" and "3 min short" are different decisions, and collapsing
+            both into one red chip would hide that. */}
+        {c.conflicts && c.conflicts.length > 0 && (
+          <span className="col" style={{ gap: 3, marginTop: 4 }}>
+            {c.conflicts.slice(0, 2).map((k, i) => (
+              <span key={i} className={`sev-${k.severity}`} style={{ fontSize: 11.5, lineHeight: 1.4 }}>
+                <span style={{ color: 'var(--sev)', fontWeight: 600 }}>
+                  {k.kind === 'overlap' ? 'Overlaps' : `${k.shortfallMin} min short`}
+                </span>
+                <span className="faint"> · {k.detail}</span>
+              </span>
+            ))}
+          </span>
+        )}
+
         {(c.blockers.length > 0 || c.warnings.length > 0) && (
-          <span className="row wrap" style={{ gap: 5, marginTop: 2 }}>
+          <span className="row wrap" style={{ gap: 5, marginTop: 4 }}>
             {c.blockers.map((b) => (
               <span key={b} className="sev-critical" style={{
                 fontSize: 11, padding: '1px 7px', borderRadius: 999,
                 background: 'var(--sev-wash)', border: '1px solid var(--sev-line)', color: 'var(--sev)',
               }}>{b}</span>
             ))}
-            {c.warnings.map((w) => (
+            {c.warnings.filter((w) => !(c.conflicts || []).some((k) => k.label === w)).map((w) => (
               <span key={w} className="sev-warn" style={{
                 fontSize: 11, padding: '1px 7px', borderRadius: 999,
                 background: 'var(--sev-wash)', border: '1px solid var(--sev-line)', color: 'var(--sev)',

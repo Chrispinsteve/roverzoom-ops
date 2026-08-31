@@ -13,6 +13,7 @@ const { riderContact } = require('../lib/redact');
 const { withTrust, locationFreshness, invalidate } = require('../lib/directory');
 const { haversineMiles, roughMinutesAway } = require('../domain/geo');
 const { UNASSIGNED_STATUSES, ACTIVE_STATUSES, STATUS_LABEL, STATUS_SEVERITY } = require('../domain/lifecycle');
+const { conflictsFor, COMMITTED_STATUSES } = require('../domain/schedule');
 
 const router = express.Router();
 
@@ -26,7 +27,7 @@ const MAX_CANDIDATE_MILES = Number(process.env.DISPATCH_MAX_MILES) || 40;
 // Ranks drivers for one pickup. Ordering is deliberate and explained in the
 // payload so an operator can see WHY the console suggested someone — an
 // unexplained ranking is one an operator learns to ignore.
-function rankCandidates(drivers, pickup, busyDriverIds) {
+function rankCandidates(drivers, pickup, busyDriverIds, commitments = new Map(), ride = null) {
   const hasPickup = pickup.lat != null && pickup.lng != null;
 
   return drivers
@@ -41,9 +42,18 @@ function rankCandidates(drivers, pickup, busyDriverIds) {
       if (d.standing.key === 'suspended') blockers.push('Account suspended');
       if (!d.trust.accountActive) blockers.push('Account not active');
       if (!d.trust.documentsComplete) blockers.push('Documents incomplete');
-      if (busyDriverIds.has(d.id)) blockers.push('Already on a trip');
+      // NOT a blocker: a driver mid-trip may still be the right person for a
+      // ride hours from now. The schedule check below is what judges that.
+      if (busyDriverIds.has(d.id) && !ride) blockers.push('Already on a trip');
+
+      // Schedule conflicts are WARNINGS here, never blockers. The driver app
+      // refuses these outright, which is right for a driver self-claiming on
+      // their phone; a dispatcher may know the gap is coverable and is
+      // allowed to say so. See domain/schedule.js.
+      const conflicts = ride ? conflictsFor(ride, commitments.get(d.id) || []) : [];
 
       const warnings = [];
+      for (const c of conflicts) warnings.push(c.label);
       if (!d.trust.humanApproved) warnings.push('Never reviewed');
       if (!d.trust.screeningClear) warnings.push(`Screening: ${d.trust.screening.status.replace('_', ' ')}`);
       if (!d.is_online) warnings.push('Offline');
@@ -67,6 +77,10 @@ function rankCandidates(drivers, pickup, busyDriverIds) {
         eligible: blockers.length === 0,
         blockers,
         warnings,
+        // Structured, so the console can show the actual shortfall rather
+        // than the same red text for "3 minutes short" and "40 minutes short".
+        conflicts,
+        worstConflict: conflicts[0] || null,
       };
     })
     .filter((c) => c.milesAway == null || c.milesAway <= MAX_CANDIDATE_MILES)
@@ -78,13 +92,34 @@ function rankCandidates(drivers, pickup, busyDriverIds) {
       const av = a.standing.key === 'cleared' ? 0 : 1;
       const bv = b.standing.key === 'cleared' ? 0 : 1;
       if (av !== bv) return av - bv;
-      // 3. Then online over offline.
+      // 3. Then drivers whose schedule actually fits, so the default choice
+      //    is never one an operator has to override.
+      const ac = a.conflicts.length ? (a.worstConflict.severity === 'critical' ? 2 : 1) : 0;
+      const bc = b.conflicts.length ? (b.worstConflict.severity === 'critical' ? 2 : 1) : 0;
+      if (ac !== bc) return ac - bc;
+      // 4. Then online over offline.
       if (a.is_online !== b.is_online) return a.is_online ? -1 : 1;
-      // 4. Then nearest, with unknown distance last.
+      // 5. Then nearest, with unknown distance last.
       if (a.milesAway == null) return 1;
       if (b.milesAway == null) return -1;
       return a.milesAway - b.milesAway;
     });
+}
+
+// Every ride each driver is already committed to, keyed by driver. One query
+// rather than one per candidate.
+async function commitmentsByDriver() {
+  const { data } = await supabase
+    .from('bookings')
+    .select('id, reference, driver_id, scheduled_at, duration_minutes, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng')
+    .in('status', COMMITTED_STATUSES)
+    .not('driver_id', 'is', null);
+  const byDriver = new Map();
+  for (const b of data || []) {
+    if (!byDriver.has(b.driver_id)) byDriver.set(b.driver_id, []);
+    byDriver.get(b.driver_id).push(b);
+  }
+  return byDriver;
 }
 
 // Drivers currently committed to a live trip.
@@ -158,14 +193,15 @@ router.get('/dispatch/:bookingId/candidates', requireAdmin, requirePermission('d
     if (error) throw error;
     if (!booking) return res.status(404).json({ error: 'Ride not found.' });
 
-    const [{ data: drivers, error: dErr }, busy] = await Promise.all([
+    const [{ data: drivers, error: dErr }, busy, commitments] = await Promise.all([
       supabase.from('drivers').select('*').limit(2000),
       busyDrivers(),
+      commitmentsByDriver(),
     ]);
     if (dErr) throw dErr;
 
     const decorated = await withTrust(drivers || []);
-    const candidates = rankCandidates(decorated, booking, busy);
+    const candidates = rankCandidates(decorated, booking, busy, commitments, booking);
 
     res.json({
       booking: {
@@ -175,6 +211,7 @@ router.get('/dispatch/:bookingId/candidates', requireAdmin, requirePermission('d
       },
       candidates: candidates.slice(0, 50),
       eligibleCount: candidates.filter((c) => c.eligible).length,
+      clearCount: candidates.filter((c) => c.eligible && c.conflicts.length === 0).length,
       maxMiles: MAX_CANDIDATE_MILES,
     });
   } catch (err) {
@@ -204,8 +241,8 @@ router.post('/dispatch/:bookingId/assign', requireAdmin, requirePermission('disp
     }
 
     const [decorated] = await withTrust([driverRow]);
-    const busy = await busyDrivers();
-    const [candidate] = rankCandidates([decorated], booking, busy);
+    const [busy, commitments] = await Promise.all([busyDrivers(), commitmentsByDriver()]);
+    const [candidate] = rankCandidates([decorated], booking, busy, commitments, booking);
 
     // Hard blockers are never overridable from the console. Assigning a
     // suspended or document-incomplete driver would put someone in a car the
@@ -267,6 +304,9 @@ router.post('/dispatch/:bookingId/assign', requireAdmin, requirePermission('disp
         driver_id: driverId, driver_name: driverRow.name,
         from_status: booking.status,
         warningsAcknowledged: candidate.warnings,
+        // Recorded explicitly: "who overrode a schedule conflict, on which
+        // ride" is the question that gets asked after a rider is left waiting.
+        scheduleConflicts: candidate.conflicts,
         milesAway: candidate.milesAway,
       },
     });
