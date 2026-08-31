@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { api } from '../lib/api';
 import { useApi } from '../lib/useApi';
 import { Sheet, Detail, Pill, Loading, ErrorNote, Restricted } from '../components/ui';
+import { AssignSheet } from '../components/AssignSheet';
 import { money, dayAndClock, clock, duration, miles, relative } from '../lib/format';
 
 // One ride, everything about it. The timeline is the centerpiece: almost every
@@ -29,10 +30,17 @@ export function RideDetail({ rideId, onClose, onChanged }) {
         }
         subtitle={ride ? dayAndClock(ride.scheduled_at) : undefined}
         footer={
-          ride && (
+          ride && data.actions && (
             <>
+              {/* Assigning was previously reachable ONLY from the dispatch
+                  board, so a ride opened from Rides or from the Overview feed
+                  could be read but not acted on. Both actions now live
+                  wherever the ride does. */}
+              {data.actions.assignable && (
+                <button className="btn btn-primary" onClick={() => setAction('assign')}>Assign a driver</button>
+              )}
               {data.actions.reassignable && (
-                <button className="btn" onClick={() => setAction('release')}>Release driver</button>
+                <button className="btn" onClick={() => setAction('release')}>Unassign driver</button>
               )}
               {data.actions.cancelable && (
                 <button className="btn btn-danger" onClick={() => setAction('cancel')}>Cancel ride</button>
@@ -74,9 +82,13 @@ export function RideDetail({ rideId, onClose, onChanged }) {
                     </span>
                   </Detail>
                   <Detail label="Phone" mono>{data.driver.phone}</Detail>
-                  <Detail label="Vehicle">{data.driver.vehicle} {data.driver.vehicle_plate ? `· ${data.driver.vehicle_plate}` : ''}</Detail>
+                  <Detail label="Vehicle">{data.driver.vehicle || '—'} {data.driver.vehicle_plate ? `· ${data.driver.vehicle_plate}` : ''}</Detail>
                   <Detail label="Location">
-                    {data.driver.locationFreshness.state === 'never'
+                    {/* Guarded: a missing derived field must not take out the
+                        whole sheet. An operator opening a ride during an
+                        incident needs the rest of this screen far more than
+                        they need the driver's GPS freshness. */}
+                    {!data.driver.locationFreshness || data.driver.locationFreshness.state === 'never'
                       ? <span className="faint">never reported</span>
                       : `${data.driver.locationFreshness.state} · ${relative(data.driver.location_updated_at)}`}
                   </Detail>
@@ -87,10 +99,10 @@ export function RideDetail({ rideId, onClose, onChanged }) {
             </Section>
 
             <Section title="Timeline">
-              <Timeline events={data.timeline} />
+              <Timeline events={data.timeline || []} />
             </Section>
 
-            {data.offers.length > 0 && (
+            {Array.isArray(data.offers) && data.offers.length > 0 && (
               <Section title={`Dispatch history · ${data.offers.length} offer${data.offers.length > 1 ? 's' : ''}`}>
                 {/* The only way to answer "why did nobody take this ride?" */}
                 <div className="col" style={{ gap: 5 }}>
@@ -178,7 +190,19 @@ export function RideDetail({ rideId, onClose, onChanged }) {
         )}
       </Sheet>
 
-      {action && ride && (
+      {action === 'assign' && ride && (
+        <AssignSheet
+          ride={{
+            id: ride.id,
+            reference: ride.reference,
+            pickup_address: ride.pickup_address,
+            scheduled_at: ride.scheduled_at,
+          }}
+          onClose={() => setAction(null)}
+          onAssigned={() => { setAction(null); reload(); onChanged?.(); }}
+        />
+      )}
+      {action && action !== 'assign' && ride && (
         <ActionDialog
           kind={action}
           ride={ride}
@@ -263,14 +287,14 @@ function ActionDialog({ kind, ride, onClose, onDone }) {
       open
       onClose={onClose}
       width={460}
-      title={isCancel ? 'Cancel this ride' : 'Release the driver'}
+      title={isCancel ? 'Cancel this ride' : 'Unassign the driver'}
       subtitle={ride.reference}
       footer={
         <>
           <button className="btn" onClick={onClose} disabled={busy}>Keep it</button>
           <button className={`btn ${isCancel ? 'btn-danger' : 'btn-primary'}`}
             disabled={!reason.trim() || busy} onClick={submit}>
-            {busy ? 'Working…' : isCancel ? 'Cancel ride' : 'Release driver'}
+            {busy ? 'Working…' : isCancel ? 'Cancel ride' : 'Unassign driver'}
           </button>
         </>
       }
@@ -280,7 +304,7 @@ function ActionDialog({ kind, ride, onClose, onDone }) {
       <p className="muted" style={{ fontSize: 13, marginBottom: 16, lineHeight: 1.55 }}>
         {isCancel
           ? 'The rider and any assigned driver stop seeing this ride. This cannot be undone.'
-          : 'The driver is detached and the ride returns to the dispatch board for manual assignment. The rider keeps their booking.'}
+          : 'The driver is removed and the ride returns to the dispatch board so it can be assigned to someone else. The rider keeps their booking.'}
       </p>
 
       {isCancel && (

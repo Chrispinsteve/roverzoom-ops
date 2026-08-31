@@ -5,7 +5,7 @@ const { requireAdmin, requirePermission } = require('../middleware/requireAdmin'
 const { can } = require('../lib/roles');
 const { auditor } = require('../lib/audit');
 const { riderContact } = require('../lib/redact');
-const { getDriverWithTrust } = require('../lib/directory');
+const { getDriverWithTrust, locationFreshness } = require('../lib/directory');
 const {
   RIDE_STATUSES, STATUS_LABEL, STATUS_SEVERITY, ACTIVE_STATUSES,
   UNASSIGNED_STATUSES, isCancelable, buildTimeline,
@@ -134,7 +134,15 @@ router.get('/rides/:id', requireAdmin, requirePermission('rides.read'), async (r
       const d = await getDriverWithTrust(booking.driver_id);
       if (d) {
         delete d._authUser;
-        driver = d;
+        // getDriverWithTrust returns the raw row plus trust; the derived
+        // fields the UI expects are added by the drivers route's own
+        // serializer, which this route never calls. Omitting them shipped a
+        // driver object the ride detail then dereferenced and crashed on.
+        driver = {
+          ...d,
+          vehicle: [d.vehicle_color, d.vehicle_make, d.vehicle_model].filter(Boolean).join(' ') || null,
+          locationFreshness: locationFreshness(d),
+        };
       }
     }
 
